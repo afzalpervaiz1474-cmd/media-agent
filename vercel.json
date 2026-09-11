@@ -1,0 +1,50 @@
+{
+  "env": {
+    "NEXT_PUBLIC_SUPABASE_URL": "https://iuiljpenprlqhjxlimvv.supabase.co",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_op_sYb0W1YTLZWp2wolgmw_fI6Pyavg",
+    "SUPABASE_SERVICE_ROLE_KEY": "sb_secret_WPO6f0WjR70oGrcHVxmAsA_2i8MQ-7g",
+    "VITE_SUPABASE_URL": "https://iuiljpenprlqhjxlimvv.supabase.co",
+    "VITE_SUPABASE_ANON_KEY": "sb_publishable_op_sYb0W1YTLZWp2wolgmw_fI6Pyavg",
+    "VITE_GOOGLE_CLIENT_ID": "1065078894672-rmp5kp8vfjns5rn9kp5psfp16g691043.apps.googleusercontent.com",
+    "VITE_GOOGLE_AUTH_PROXY": "https://designarena.ai/auth/google/callback",
+    "FULLSTACK_PROJECT_REF": "iuiljpenprlqhjxlimvv",
+    "FULLSTACK_RESTORE_API_URL": "https://designarena.ai/api/fullstack-restore"
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=63072000; includeSubDomains; preload"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=()"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "SAMEORIGIN"
+        }
+      ]
+    }
+  ]
+}
