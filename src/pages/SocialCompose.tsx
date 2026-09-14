@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import supabase from '../lib/supabase'
-import { api } from '../lib/api'
+import { api, otpApi } from '../lib/api'
 import PageHeader from '../components/PageHeader'
 import AgentPanel from '../components/AgentPanel'
 import { useToast } from '../contexts/ToastContext'
@@ -42,6 +42,14 @@ export default function SocialCompose() {
   const [analyzing, setAnalyzing] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [orchestrationResult, setOrchestrationResult] = useState<any | null>(null)
+
+  const [showOtpDialog, setShowOtpDialog] = useState(false)
+  const [otpId, setOtpId] = useState('')
+  const [otpEmail, setOtpEmail] = useState('')
+  const [otpProvider, setOtpProvider] = useState('')
+  const [otpCode, setOtpCode] = useState('')
+  const [otpLoading, setOtpLoading] = useState(false)
+  const [otpError, setOtpError] = useState('')
 
   const loadProviders = useCallback(async () => {
     setProvidersLoading(true)
@@ -106,7 +114,7 @@ export default function SocialCompose() {
     if (!selected) { push({ kind: 'warn', title: 'Select media first' }); return }
     if (chosen.length === 0) { push({ kind: 'warn', title: 'Select at least one platform' }); return }
     if (mode === 'auto' && !confirm(`Auto mode will call the official API for: ${chosen.join(', ')}.\nContinue?`)) return
-    setPublishing(true); setOrchestrationResult(null)
+    setPublishing(true); setOrchestrationResult(null); setOtpError('')
     try {
       const r = await api.post<{ orchestration: any }>('/api/social/compose', {
         media_asset_id: selected.id,
@@ -114,8 +122,22 @@ export default function SocialCompose() {
         mode,
         metadata_by_platform: chosen.reduce((acc, p) => ({ ...acc, [p]: metadataByPlatform[p] }), {}),
       })
-      setOrchestrationResult(r.orchestration)
-      push({ kind: 'success', title: `Orchestration complete (${mode})`, body: `Job ${r.orchestration.job_id.slice(0, 8)}` })
+      const results = r.orchestration?.results || {}
+      const otpRequired = chosen.find((p) => results[p]?.status === 'OTP_REQUIRED')
+      if (otpRequired) {
+        const account = providers[otpRequired]?.account
+        setOtpProvider(otpRequired)
+        setOtpEmail(account?.email || '')
+        try {
+          const otpReq = await otpApi.resend({ provider: otpRequired, account_id: account?.id || '', email: account?.email || '', otp_id: results[otpRequired]?.otp_id })
+          setOtpId(otpReq.otp_id)
+        } catch { /* will show dialog anyway */ }
+        setShowOtpDialog(true)
+        push({ kind: 'warn', title: 'Verification Required', body: `A verification code was sent to ${account?.email}` })
+      } else {
+        setOrchestrationResult(r.orchestration)
+        push({ kind: 'success', title: `Orchestration complete (${mode})`, body: `Job ${r.orchestration.job_id.slice(0, 8)}` })
+      }
     } catch (e: any) { push({ kind: 'error', title: 'Orchestrate failed', body: e.message }) }
     finally { setPublishing(false) }
   }
@@ -129,6 +151,37 @@ export default function SocialCompose() {
   }), [chosen, providers])
 
   const anyBlocking = readiness.some((r) => r.level === 'error') || readiness.some((r) => r.level === 'warn' && mode === 'auto')
+
+  const verifyOtp = async () => {
+    if (!otpCode.trim() || !otpId) return
+    setOtpLoading(true); setOtpError('')
+    try {
+      await otpApi.verify({ otp_id: otpId, code: otpCode.trim() })
+      setShowOtpDialog(false)
+      setOtpCode('')
+      push({ kind: 'success', title: 'Verified! Publishing...' })
+      const r = await api.post<{ orchestration: any }>('/api/social/compose', {
+        media_asset_id: selected!.id,
+        platforms: chosen,
+        mode,
+        metadata_by_platform: chosen.reduce((acc, p) => ({ ...acc, [p]: metadataByPlatform[p] }), {}),
+      })
+      setOrchestrationResult(r.orchestration)
+      push({ kind: 'success', title: `Orchestration complete (${mode})`, body: `Job ${r.orchestration.job_id.slice(0, 8)}` })
+    } catch (e: any) { setOtpError(e.message) }
+    finally { setOtpLoading(false) }
+  }
+
+  const resendOtp = async () => {
+    if (!otpId || !otpProvider || !otpEmail) return
+    setOtpLoading(true); setOtpError('')
+    try {
+      const r = await otpApi.resend({ provider: otpProvider, account_id: providers[otpProvider]?.account?.id || '', email: otpEmail, otp_id: otpId })
+      setOtpId(r.otp_id)
+      push({ kind: 'success', title: 'Code resent', body: 'Check your email again' })
+    } catch (e: any) { setOtpError(e.message) }
+    finally { setOtpLoading(false) }
+  }
 
   return (
     <div className="max-w-7xl mx-auto p-6 md:p-8">
@@ -278,6 +331,31 @@ export default function SocialCompose() {
           />
         </div>
       </div>
+
+      {showOtpDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="surface-2 rounded-xl p-6 w-full max-w-sm border border-[color:var(--color-border)]">
+            <div className="flex items-center gap-2 mb-4">
+              <ShieldAlert size={18} className="text-[color:var(--color-accent)]"/>
+              <h3 className="font-semibold">Verify your email</h3>
+            </div>
+            <p className="text-sm text-[color:var(--color-muted)] mb-3">
+              A 6-digit code was sent to <strong>{otpEmail}</strong>. Enter it below to verify before publishing.
+            </p>
+            <div className="flex gap-2 mb-3">
+              <input className="input flex-1 text-center text-lg tracking-[0.3em]" maxLength={6} placeholder="000000" value={otpCode} onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))} />
+            </div>
+            {otpError && <div className="text-xs text-[color:var(--color-danger)] mb-3">{otpError}</div>}
+            <div className="flex gap-2">
+              <button onClick={verifyOtp} disabled={otpLoading || otpCode.length < 6} className="btn btn-primary flex-1">
+                {otpLoading ? <Loader2 size={14} className="animate-spin"/> : 'Verify'}
+              </button>
+              <button onClick={resendOtp} disabled={otpLoading} className="btn btn-ghost text-xs">Resend</button>
+              <button onClick={() => { setShowOtpDialog(false); setOtpCode(''); setOtpError('') }} className="btn btn-ghost text-xs">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

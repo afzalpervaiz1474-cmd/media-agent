@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
 import { useToast } from '../contexts/ToastContext'
-import { Bot, Plus, Trash2, Star, Beaker, Loader2, ShieldCheck, ShieldAlert, Info, Activity } from 'lucide-react'
+import { Bot, Plus, Trash2, Star, Beaker, Loader2, ShieldCheck, ShieldAlert, Info, Activity, RefreshCw, Search, ArrowDownUp, Zap } from 'lucide-react'
 import { timeAgo } from '../lib/format'
 
 type Supported = Record<string, { name: string; docs: string; default_base_url: string; default_model: string; needs_key: boolean; supports_json_mode: boolean }>
@@ -10,6 +10,18 @@ type Config = {
   id: string; provider: string; label: string | null; model: string | null; base_url: string | null;
   api_key_hint: string | null; is_primary: boolean; allow_fallback: boolean;
   last_tested_at: string | null; last_test_status: string | null; last_test_detail: string | null;
+}
+type OpenRouterModel = {
+  id: string; name: string; description: string; context_length: number | null;
+  pricing: { input?: number; output?: number; [key: string]: any } | null;
+  enabled: boolean; tags: string[];
+}
+
+// Check if a model is free (pricing input/output are 0 or undefined)
+function isFreeModel(m: OpenRouterModel): boolean {
+  if (!m.pricing) return true;
+  return (m.pricing.input === 0 || m.pricing.input === undefined) &&
+         (m.pricing.output === 0 || m.pricing.output === undefined);
 }
 
 export default function SettingsAiProviders() {
@@ -22,6 +34,14 @@ export default function SettingsAiProviders() {
   const [usage, setUsage] = useState<any | null>(null)
   const { push } = useToast()
 
+  // OpenRouter models state
+  const [openRouterModels, setOpenRouterModels] = useState<OpenRouterModel[]>([])
+  const [modelsLoading, setModelsLoading] = useState(false)
+  const [modelsError, setModelsError] = useState<string | null>(null)
+  const [modelSearch, setModelSearch] = useState('')
+  const [showFreeOnly, setShowFreeOnly] = useState(false)
+  const [hasRefreshedModels, setHasRefreshedModels] = useState(false)
+
   const [form, setForm] = useState<any>({ provider: 'openrouter', model: '', base_url: '', api_key: '', is_primary: true, allow_fallback: false, label: '' })
 
   const load = async () => {
@@ -29,6 +49,9 @@ export default function SettingsAiProviders() {
     try {
       const r = await api.get<{ supported: Supported; configs: Config[]; env_defaults: any[] }>('/api/ai/providers')
       setSupported(r.supported); setConfigs(r.configs); setEnvDefaults(r.env_defaults)
+      // If user has an OpenRouter config, mark that models may have been fetched
+      const hasOpenRouter = r.configs.some((c: Config) => c.provider === 'openrouter')
+      if (hasOpenRouter) setHasRefreshedModels(true)
     } catch (e: any) { push({ kind: 'error', title: 'Load failed', body: e.message }) }
     finally { setLoading(false) }
   }
@@ -36,6 +59,31 @@ export default function SettingsAiProviders() {
   useEffect(() => { load(); loadUsage() }, [])
 
   const spec = supported[form.provider]
+  const isOpenRouter = form.provider === 'openrouter'
+
+  // Filter models based on search and free-only toggle
+  const filteredModels = openRouterModels.filter((m) => {
+    if (showFreeOnly && !isFreeModel(m)) return false
+    if (!modelSearch) return true
+    const q = modelSearch.toLowerCase()
+    return m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q) || (m.tags || []).some((t) => t.toLowerCase().includes(q))
+  })
+
+  const fetchModels = async () => {
+    setModelsLoading(true)
+    setModelsError(null)
+    try {
+      const r = await api.get<{ models: OpenRouterModel[] }>('/api/ai/models')
+      setOpenRouterModels(r.models || [])
+      setHasRefreshedModels(true)
+      push({ kind: 'success', title: 'Models loaded', body: `${r.models?.length || 0} models found from OpenRouter.` })
+    } catch (e: any) {
+      setModelsError(e.message || 'Failed to fetch models')
+      push({ kind: 'error', title: 'Model fetch failed', body: e.message })
+    } finally {
+      setModelsLoading(false)
+    }
+  }
 
   const save = async (testAfter = false) => {
     setSaving(true)
@@ -56,6 +104,31 @@ export default function SettingsAiProviders() {
       if (testAfter) await test(r.item.id)
     } catch (e: any) { push({ kind: 'error', title: 'Save failed', body: e.message }) }
     finally { setSaving(false) }
+  }
+
+  const selectModel = async (modelId: string) => {
+    setForm({ ...form, model: modelId })
+    // Find the OpenRouter config to update
+    const openRouterConfig = configs.find((c) => c.provider === 'openrouter')
+    if (!openRouterConfig) {
+      push({ kind: 'error', title: 'No config found', body: 'Save your OpenRouter provider first.' })
+      return
+    }
+    try {
+      await api.post('/api/ai/providers', {
+        id: openRouterConfig.id,
+        provider: 'openrouter',
+        model: modelId,
+        label: openRouterConfig.label,
+        base_url: openRouterConfig.base_url,
+        is_primary: openRouterConfig.is_primary,
+        allow_fallback: openRouterConfig.allow_fallback,
+      })
+      await load()
+      push({ kind: 'success', title: 'Model selected', body: `Model selected for OpenRouter.` })
+    } catch (e: any) {
+      push({ kind: 'error', title: 'Failed to select model', body: e.message })
+    }
   }
 
   const test = async (id: string) => {
@@ -197,15 +270,104 @@ export default function SettingsAiProviders() {
             <div className="p-4 space-y-3">
               <div>
                 <div className="label mb-1">Provider</div>
-                <select className="select" value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })}>
+                <select className="select" value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value, model: '' })}>
                   {Object.entries(supported).map(([id, s]) => (<option key={id} value={id}>{s.name}</option>))}
                 </select>
                 {spec && <div className="text-[11px] text-[color:var(--color-muted)] mt-1 flex items-center gap-1"><Info size={10}/> Default model: <span className="font-mono">{spec.default_model || '—'}</span></div>}
               </div>
-              <div>
-                <div className="label mb-1">Model (optional)</div>
-                <input className="input font-mono text-xs" value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={spec?.default_model || 'provider default'}/>
-              </div>
+
+              {/* OpenRouter model dropdown */}
+              {isOpenRouter && (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="label mb-0">Model</div>
+                    <button
+                      onClick={fetchModels}
+                      disabled={modelsLoading}
+                      className="btn btn-ghost text-xs flex items-center gap-1"
+                      title="Refresh models from OpenRouter"
+                    >
+                      <RefreshCw size={12} className={modelsLoading ? 'animate-spin' : ''}/>
+                      {modelsLoading ? 'Loading...' : 'Refresh'}
+                    </button>
+                  </div>
+
+                  {/* Models list */}
+                  {openRouterModels.length > 0 && (
+                    <div className="space-y-1 mt-2">
+                      {/* Search and filter bar */}
+                      <div className="flex gap-2 items-center">
+                        <div className="relative flex-1">
+                          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-[color:var(--color-muted)]"/>
+                          <input
+                            className="input font-mono text-xs pl-7"
+                            placeholder="Search models..."
+                            value={modelSearch}
+                            onChange={(e) => setModelSearch(e.target.value)}
+                          />
+                        </div>
+                        <button
+                          onClick={() => setShowFreeOnly(!showFreeOnly)}
+                          className={`btn btn-ghost text-xs ${showFreeOnly ? 'btn-accent' : ''}`}
+                          title="Show only free models"
+                        >
+                          <Zap size={10}/> {showFreeOnly ? 'All' : 'Free'}
+                        </button>
+                      </div>
+                      <div className="text-[10px] text-[color:var(--color-muted)]">
+                        {showFreeOnly ? `Showing ${filteredModels.length} free models` : `${filteredModels.length} models (${openRouterModels.filter(isFreeModel).length} free)`}
+                      </div>
+                      {/* Model list dropdown */}
+                      <div className="border border-[color:var(--color-border)] rounded-lg max-h-48 overflow-y-auto divide-y divide-[color:var(--color-border)]">
+                        {filteredModels.length === 0 ? (
+                          <div className="p-3 text-xs text-[color:var(--color-muted)] text-center">
+                            {showFreeOnly ? 'No free models found.' : 'No models match your search.'}
+                          </div>
+                        ) : (
+                          filteredModels.map((m) => (
+                            <button
+                              key={m.id}
+                              onClick={() => selectModel(m.id)}
+                              className={`w-full text-left p-2 hover:bg-[color:var(--color-surface-2)] transition-colors first:rounded-t-lg last:rounded-b-lg ${form.model === m.id ? 'bg-[color:var(--color-accent)]/10 border-l-2 border-[color:var(--color-accent)]' : ''}`}
+                            >
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="text-xs font-mono truncate flex-1">{m.name}</span>
+                                {form.model === m.id && <Zap size={10} className="text-[color:var(--color-accent)] flex-shrink-0"/>}
+                              </div>
+                              <div className="text-[10px] text-[color:var(--color-muted)] mt-0.5">
+                                {m.context_length ? `${m.context_length.toLocaleString()} ctx` : '—'}
+                                {m.tags?.length ? ` · ${m.tags.slice(0, 2).join(', ')}` : ''}
+                                {isFreeModel(m) ? ' · free' : ''}
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Model error */}
+                  {modelsError && (
+                    <div className="text-[11px] text-[color:var(--color-danger)] mt-1 flex items-center gap-1">
+                      <ShieldAlert size={10}/> {modelsError}
+                    </div>
+                  )}
+
+                  {!hasRefreshedModels && (
+                    <div className="text-[11px] text-[color:var(--color-muted)] mt-1 flex items-center gap-1">
+                      <Info size={10}/> Save your OpenRouter key first, then click Refresh to browse available models.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!isOpenRouter && (
+                <div>
+                  <div className="label mb-1">Model (optional)</div>
+                  <input className="input font-mono text-xs" value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={spec?.default_model || 'provider default'}/>
+                </div>
+              )}
+
               {(form.provider === 'openai_compatible' || form.provider === 'ollama') && (
                 <div>
                   <div className="label mb-1">Base URL</div>

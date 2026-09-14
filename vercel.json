@@ -8,7 +8,23 @@
     "VITE_GOOGLE_CLIENT_ID": "1065078894672-rmp5kp8vfjns5rn9kp5psfp16g691043.apps.googleusercontent.com",
     "VITE_GOOGLE_AUTH_PROXY": "https://designarena.ai/auth/google/callback",
     "FULLSTACK_PROJECT_REF": "iuiljpenprlqhjxlimvv",
-    "FULLSTACK_RESTORE_API_URL": "https://designarena.ai/api/fullstack-restore"
+    "FULLSTACK_RESTORE_API_URL": "https://designarena.ai/api/fullstack-restore",
+    "OAUTH_TESTING_MODE": "true",
+    "YOUTUBE_CLIENT_ID": "470479590157-6uvivuk3nhs4ofirkmigagv8ioc2q62j.apps.googleusercontent.com",
+    "YOUTUBE_CLIENT_SECRET": "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",
+    "VITE_GOOGLE_AUTH_PROXY": "https://designarena.ai/auth/google/callback",
+    "TIKTOK_CLIENT_KEY": "",
+    "TIKTOK_CLIENT_SECRET": "",
+    "META_APP_ID": "",
+    "META_APP_SECRET": "",
+    "OPENROUTER_API_KEY": "",
+    "OPENAI_API_KEY": "",
+    "PLATFORM_AI_HOURLY_LIMIT": "60",
+    "PUBLIC_APP_URL": "https://your-deploy-url.vercel.app",
+    "AI_ENCRYPTION_KEY": "",
+    "YOUTUBE_REDIRECT_URI": "",
+    "TIKTOK_REDIRECT_URI": "",
+    "META_REDIRECT_URI": ""
   },
   "rewrites": [
     {

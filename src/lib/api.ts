@@ -33,3 +33,9 @@ export const api = {
   patch: <T = any>(path: string, body?: any) => apiFetch<T>(path, { method: 'PATCH', body: JSON.stringify(body ?? {}) }),
   del: <T = any>(path: string, body?: any) => apiFetch<T>(path, { method: 'DELETE', body: JSON.stringify(body ?? {}) }),
 }
+
+export const otpApi = {
+  request: (body: { provider: string; account_id: string; email: string }) => api.post<{ otp_id: string; expires_at: string }>('/api/otp/request', body),
+  verify: (body: { otp_id: string; code: string }) => api.post<{ verified: boolean }>('/api/otp/verify', body),
+  resend: (body: { provider: string; account_id: string; email: string; otp_id?: string }) => api.post<{ otp_id: string; expires_at: string }>('/api/otp/resend', body),
+}

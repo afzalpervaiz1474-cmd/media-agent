@@ -26,32 +26,43 @@ export default async function handler(req, res) {
   // Meta stuffs state as `state|provider` because Facebook is shared between IG and FB.
   const state = rawState.split('|')[0];
 
-  try {
-    const { data: stateRow } = await supabase.from('oauth_states').select('*').eq('state', state).maybeSingle();
-    if (!stateRow) return sendHtml(res, 400, 'Invalid OAuth state', 'This authorization link is stale or was tampered with.');
-    if (stateRow.provider !== provider) return sendHtml(res, 400, 'Provider mismatch', '');
-    if (new Date(stateRow.created_at).getTime() < Date.now() - 15 * 60 * 1000) {
-      return sendHtml(res, 400, 'Authorization expired', 'Please start the connection flow again.');
-    }
-    await supabase.from('oauth_states').delete().eq('state', state);
+try {
+     const { data: stateRow } = await supabase.from('oauth_states').select('*').eq('state', state).maybeSingle();
+     if (!stateRow) return sendHtml(res, 400, 'Invalid OAuth state', 'This authorization link is stale or was tampered with.');
+     if (stateRow.provider !== provider) return sendHtml(res, 400, 'Provider mismatch', '');
+     if (new Date(stateRow.created_at).getTime() < Date.now() - 15 * 60 * 1000) {
+       return sendHtml(res, 400, 'Authorization expired', 'Please start the connection flow again.');
+     }
+     await supabase.from('oauth_states').delete().eq('state', state);
 
-    const cfg = providerConfigStatus()[provider];
-    if (!cfg.configured) return sendHtml(res, 500, 'Provider not configured', cfg.missing.join(', '));
+     const cfg = providerConfigStatus()[provider];
+     if (!cfg.configured) return sendHtml(res, 500, 'Provider not configured', cfg.missing.join(', '));
 
-    const redirectUri = resolveRedirectUri(req, provider);
-    const tokens = await exchangeCode(provider, code, redirectUri, stateRow.code_verifier);
-    const profile = await fetchProfile(provider, tokens.access_token);
+     const redirectUri = resolveRedirectUri(req, provider);
+     const tokens = await exchangeCode(provider, code, redirectUri, stateRow.code_verifier);
+     const profile = await fetchProfile(provider, tokens.access_token);
 
-    const account = await upsertAccount({
-      user_id: stateRow.user_id,
-      provider,
-      provider_account_id: profile.provider_account_id,
-      handle: profile.handle,
-      display_name: profile.display_name,
-      avatar_url: profile.avatar_url,
-      scopes: (tokens.scope || meta.scopes.join(' ')).split(/[,\s]+/).filter(Boolean),
-      raw_profile: profile.raw,
-    });
+     // Channel ownership verification for YouTube.
+     // Compare the authenticated channel ID with the channel URL the user entered.
+     if (provider === 'youtube' && stateRow.channel_url) {
+       const channelId = await resolveChannelId(tokens.access_token, stateRow.channel_url);
+       if (channelId && channelId !== profile.provider_account_id) {
+         await audit(stateRow.user_id, 'oauth.channel_mismatch', { type: 'channel_mismatch', user_id: stateRow.user_id, channel_url: stateRow.channel_url, authenticated_channel: profile.provider_account_id });
+         return sendHtml(res, 403, 'Channel mismatch',
+           'The Google account you selected does not control the YouTube channel you entered.');
+       }
+     }
+
+     const account = await upsertAccount({
+       user_id: stateRow.user_id,
+       provider,
+       provider_account_id: profile.provider_account_id,
+       handle: profile.handle,
+       display_name: profile.display_name,
+       avatar_url: profile.avatar_url,
+       scopes: (tokens.scope || meta.scopes.join(' ')).split(/[,\s]+/).filter(Boolean),
+       raw_profile: profile.raw,
+     });
 
     await supabase.from('oauth_tokens').insert({
       user_id: stateRow.user_id,
@@ -206,6 +217,35 @@ async function upsertAccount(row) {
     scopes: row.scopes, status: 'connected', last_synced_at: new Date().toISOString(),
   }).select('*').single();
   return data;
+}
+
+async function resolveChannelId(accessToken, channelUrl) {
+  try {
+    let channelId;
+    const url = new URL(channelUrl);
+    const pathname = url.pathname;
+    if (pathname.match(/\/channel\/(.+)/)) {
+      channelId = pathname.match(/\/channel\/(.+)/)[1];
+    } else if (pathname.match(/\/@(.+)/)) {
+      const handle = pathname.match(/\/@(.+)/)[1];
+      const r = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=id&forUsername=${handle}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!r.ok) return null;
+      const json = await r.json();
+      return json.items?.[0]?.id || null;
+    } else if (pathname.match(/\/c\/(.+)/)) {
+      const cname = pathname.match(/\/c\/(.+)/)[1];
+      const r = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=id&forUsername=${cname}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!r.ok) return null;
+      const json = await r.json();
+      return json.items?.[0]?.id || null;
+    }
+    if (channelId) return channelId;
+  } catch { /* ignore */ }
+  return null;
 }
 
 function sendHtml(res, status, title, message, success = false, provider = '') {

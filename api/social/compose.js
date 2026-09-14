@@ -3,6 +3,7 @@ import supabase from '../db-client.js';
 import { preflight, getUser, requireUser, safeError, audit } from '../_auth.js';
 import { PROVIDER_META, providerConfigStatus } from '../_providers.js';
 import { publishYouTube, publishTikTok, publishInstagram, publishFacebook } from '../_publishers.js';
+import { hasPendingOtp } from '../_otp.js';
 
 // POST /api/social/compose
 // The Social Media Orchestrator.
@@ -98,27 +99,32 @@ export default async function handler(req, res) {
         continue;
       }
 
-      // AUTO MODE — call the real provider API. Never faked.
-      try {
-        const out = await callPublisher(provider, {
-          userId: user.id, media, metadata: meta,
-          contentType: meta.content_type,
-          options: meta.options || {},
-        });
-        results[provider] = { status: 'SUCCESS', provider_post_id: out.provider_post_id, provider_url: out.provider_url };
-        await supabase.from('publish_results').insert({
-          user_id: user.id, job_id: parentJob.id, account_id: account.id, provider,
-          provider_post_id: out.provider_post_id, provider_url: out.provider_url,
-          status: 'published', raw: out.raw || {},
-        });
-        await logEvent(parentJob.id, 'info', `${provider}: published${out.provider_url ? ' (' + out.provider_url + ')' : ''}`);
-        await supabase.from('notifications').insert({ user_id: user.id, kind: 'publish.completed', title: `${PROVIDER_META[provider].name}: published`, body: out.provider_url || `id: ${out.provider_post_id}`, link: `/jobs/${parentJob.id}` });
-      } catch (e) {
-        const msg = safeError(e);
-        results[provider] = { status: 'FAILED', reason: msg };
-        await supabase.from('publish_results').insert({ user_id: user.id, job_id: parentJob.id, account_id: account.id, provider, status: 'failed', error: msg });
-        await logEvent(parentJob.id, 'error', `${provider}: ${msg}`);
-        await supabase.from('notifications').insert({ user_id: user.id, kind: 'publish.failed', title: `${PROVIDER_META[provider].name}: publish failed`, body: msg, link: `/jobs/${parentJob.id}` });
+if (mode === 'auto') {
+        const pendingOtp = await hasPendingOtp(user.id, provider, account.id);
+        if (pendingOtp) {
+          results[provider] = { status: 'OTP_REQUIRED', reason: 'Email verification required before publishing.', otp_id: pendingOtp.id };
+          await logEvent(parentJob.id, 'warn', provider + ': OTP required');
+          continue;
+        }
+        try {
+          const out = await callPublisher(provider, {
+            userId: user.id,
+            media,
+            metadata: meta,
+            contentType: meta.content_type,
+            options: meta.options || {},
+          });
+          results[provider] = { status: 'SUCCESS', provider_post_id: out.provider_post_id, provider_url: out.provider_url };
+          await supabase.from('publish_results').insert({ user_id: user.id, job_id: parentJob.id, account_id: account.id, provider, provider_post_id: out.provider_post_id, provider_url: out.provider_url, status: 'published', raw: out.raw || {} });
+          await logEvent(parentJob.id, 'info', provider + ': published' + (out.provider_url ? ' (' + out.provider_url + ')' : ''));
+          await supabase.from('notifications').insert({ user_id: user.id, kind: 'publish.completed', title: PROVIDER_META[provider].name + ': published', body: out.provider_url || ('id: ' + out.provider_post_id), link: '/jobs/' + parentJob.id });
+        } catch (e) {
+          const msg = safeError(e);
+          results[provider] = { status: 'FAILED', reason: msg };
+          await supabase.from('publish_results').insert({ user_id: user.id, job_id: parentJob.id, account_id: account.id, provider, status: 'failed', error: msg });
+          await logEvent(parentJob.id, 'error', provider + ': ' + msg);
+          await supabase.from('notifications').insert({ user_id: user.id, kind: 'publish.failed', title: PROVIDER_META[provider].name + ': publish failed', body: msg, link: '/jobs/' + parentJob.id });
+        }
       }
     }
 

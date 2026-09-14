@@ -13,7 +13,7 @@ export default async function handler(req, res) {
     const { user } = await getUser(req);
     if (!requireUser(user, res)) return;
 
-    if (req.method === 'GET') {
+    if (req.method === 'GET' && req.pathname === '/api/ai/providers') {
       const { data } = await supabase.from('ai_provider_configs').select('id,provider,label,model,base_url,api_key_hint,is_primary,allow_fallback,last_tested_at,last_test_status,last_test_detail,created_at,updated_at').eq('user_id', user.id).order('is_primary', { ascending: false }).order('created_at');
       const envList = envDefaults().map((e) => ({ source: 'env', provider: e.provider, model: e.model, base_url: e.base_url, hint: 'server env' }));
       return res.status(200).json({

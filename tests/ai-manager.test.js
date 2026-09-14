@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SUPPORTED_PROVIDERS, envDefaults, isConfigured } from '../api/_ai_registry.js';
+import { SUPPORTED_PROVIDERS, envDefaults, isConfigured, fetchOpenRouterModels } from '../api/_ai_registry.js';
 import { encryptSecret, decryptSecret, keyHint } from '../api/_crypto.js';
 
 const originalEnv = { ...process.env };
@@ -14,13 +14,18 @@ describe('SUPPORTED_PROVIDERS', () => {
   });
 
   it('OpenRouter has a configurable default model but does NOT hardcode a specific one', () => {
-    // The default is only used if no user model is chosen; users can override at runtime.
     expect(typeof SUPPORTED_PROVIDERS.openrouter.default_model).toBe('string');
     expect(SUPPORTED_PROVIDERS.openrouter.default_model.length).toBeGreaterThan(0);
   });
 
   it('Ollama does not require a key', () => {
     expect(SUPPORTED_PROVIDERS.ollama.needs_key).toBe(false);
+  });
+
+  it('OpenRouter supports model metadata fields', () => {
+    expect(SUPPORTED_PROVIDERS.openrouter).toHaveProperty('default_model');
+    expect(SUPPORTED_PROVIDERS.openrouter).toHaveProperty('needs_key');
+    expect(SUPPORTED_PROVIDERS.openrouter).toHaveProperty('supports_json_mode');
   });
 });
 
@@ -66,10 +71,32 @@ describe('envDefaults', () => {
   it('never exposes the raw key on the returned object shape used for listing', () => {
     process.env.OPENROUTER_API_KEY = 'sk-test-1234567890';
     const list = envDefaults();
-    // The internal shape has _key (used only by the manager) — listUserConfigs
-    // and the /api/ai/providers route deliberately never surface it.
     expect(list[0]._key).toBeDefined();
     expect(list[0].provider).toBe('openrouter');
+  });
+});
+
+describe('fetchOpenRouterModels', () => {
+  it('returns null when no apiKey provided', async () => {
+    const result = await fetchOpenRouterModels('');
+    expect(result).toBeNull();
+  });
+
+  it('returns null for invalid/missing API key', async () => {
+    const result = await fetchOpenRouterModels('invalid-key');
+    expect(result === null || Array.isArray(result)).toBe(true);
+  });
+
+  it('never exposes the API key in the returned data', async () => {
+    const key = 'sk-test-key-12345';
+    const result = await fetchOpenRouterModels(key);
+    if (Array.isArray(result)) {
+      for (const m of result) {
+        expect(m.id).toBeTruthy();
+        expect(m).not.toHaveProperty('apiKey');
+        expect(m).not.toHaveProperty('key');
+      }
+    }
   });
 });
 

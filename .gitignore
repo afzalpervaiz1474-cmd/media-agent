@@ -23,4 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 .vite-source-tags.js
+.vite-source-tags.js.timestamp-*
 .vercel
+vite.config.ts.timestamp-*.mjs

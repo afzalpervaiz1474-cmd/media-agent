@@ -85,8 +85,8 @@ export default function ProviderWorkspace({ provider }: { provider: Provider }) 
   useEffect(() => { loadAccount(); loadMedia(); loadHistory() }, [loadAccount, loadMedia, loadHistory])
 
   useEffect(() => {
-    const onMsg = (event: MessageEvent) => {
-      if (event.data?.type !== 'modulate-oauth') return
+const onMsg = (event: MessageEvent) => {
+      if (event.data?.type !== 'modulate-oauth') return;
       if (event.data.status === 'success') {
         push({ kind: 'success', title: `${provider} connected` })
         loadAccount()
@@ -99,21 +99,36 @@ export default function ProviderWorkspace({ provider }: { provider: Provider }) 
     return () => window.removeEventListener('message', onMsg)
   }, [provider, push, loadAccount])
 
-  const beginConnect = async () => {
-    setConnecting(true)
-    try {
-      const r = await api.get<{ configured: boolean; url?: string; missing?: string[]; note?: string }>(`/api/oauth/${provider}/start`)
-      if (!r.configured) {
-        setConnecting(false)
-        push({ kind: 'warn', title: 'Configuration required', body: r.note || `Missing: ${r.missing?.join(', ')}` })
-        return
-      }
-      window.open(r.url, `modulate-oauth-${provider}`, 'width=520,height=680')
-    } catch (e: any) {
-      setConnecting(false)
-      push({ kind: 'error', title: 'Could not start OAuth', body: e.message })
-    }
-  }
+const beginConnect = async () => {
+     setConnecting(true)
+     try {
+       const next = channelUrl ? `/${provider}?channel=${encodeURIComponent(channelUrl)}` : `/${provider}`;
+       const r = await api.get<{ configured: boolean; url?: string; missing?: string[]; note?: string; testing?: boolean }>(`/api/oauth/${provider}/start${channelUrl ? '?channel=' + encodeURIComponent(channelUrl) : ''}`)
+       if (!r || typeof r !== 'object' || !('configured' in r) || r.configured === undefined) {
+         setConnecting(false)
+         push({ kind: 'error', title: 'Invalid response from server', body: 'Received an unexpected response from the OAuth server.' })
+         return
+       }
+if (!r.configured) {
+          setConnecting(false)
+          const testingNote = r.testing ? 'Google OAuth is currently in testing mode. The application owner must publish the OAuth app before public users can connect YouTube.' : undefined;
+          push({ kind: 'warn', title: 'Configuration required', body: testingNote || r.note || `Missing: ${r.missing?.join(', ')}` })
+          return
+        }
+        if (r.testing) {
+          push({ kind: 'warn', title: 'Testing Mode', body: 'Google OAuth is currently in testing mode. The application owner must publish the OAuth app before public users can connect YouTube.' })
+        }
+        if (!r.url) {
+         setConnecting(false)
+         push({ kind: 'error', title: 'Missing authorization URL', body: 'The server did not return an authorization URL. Check provider configuration.' })
+         return
+       }
+       window.open(r.url, `modulate-oauth-${provider}`, 'width=520,height=680')
+     } catch (e: any) {
+       setConnecting(false)
+       push({ kind: 'error', title: 'Could not start OAuth', body: e.message })
+     }
+   }
 
   const runHealth = async () => {
     setHealthLoading(true)
@@ -372,15 +387,34 @@ export default function ProviderWorkspace({ provider }: { provider: Provider }) 
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-56 overflow-y-auto">
                   {media.length === 0 ? (
                     <div className="col-span-full text-xs text-[color:var(--color-muted)]">No media yet. Upload one to get started.</div>
-                  ) : media.map((m) => (
-                    <button key={m.id} onClick={() => { setSelected(m); setAnalysis(null); }} className={`text-left surface-2 rounded-lg p-2 border ${selected?.id === m.id ? 'border-[color:var(--color-accent)]' : 'border-transparent'} hover:border-[color:var(--color-border-strong)]`}>
-                      <div className="aspect-video w-full bg-[color:var(--color-bg)] rounded overflow-hidden grid place-items-center text-[color:var(--color-muted)] text-xs">
-                        {m.kind === 'image' ? <img src={m.public_url} alt="" className="h-full w-full object-cover"/> : <video src={m.public_url} className="h-full w-full object-cover" muted preload="metadata"/>}
-                      </div>
-                      <div className="text-xs truncate mt-1">{m.filename}</div>
-                      <div className="text-[10px] text-[color:var(--color-muted)] font-mono">{formatBytes(m.size_bytes)} · {formatDuration(m.duration_sec)}</div>
-                    </button>
-                  ))}
+                  ) : media.map((m) => {
+                    const videoProxyUrl = m.kind === 'video' && m.storage_path ? `/api/media/proxy?path=${encodeURIComponent(m.storage_path)}` : null;
+                    return (
+                      <button key={m.id} onClick={() => { setSelected(m); setAnalysis(null); }} className={`text-left surface-2 rounded-lg p-2 border ${selected?.id === m.id ? 'border-[color:var(--color-accent)]' : 'border-transparent'} hover:border-[color:var(--color-border-strong)]`}>
+                        <div className="aspect-video w-full bg-[color:var(--color-bg)] rounded overflow-hidden grid place-items-center text-[color:var(--color-muted)] text-xs">
+                          {m.kind === 'image' ? (
+                            <img
+                              src={m.public_url}
+                              alt=""
+                              className="h-full w-full object-cover"
+                              onError={(e) => { const el = e.currentTarget as HTMLElement; el.style.display = 'none'; const sib = el.nextElementSibling as HTMLElement | null; if (sib) sib.style.display = 'flex'; }}
+                            />
+                          ) : (
+                            <video
+                              src={videoProxyUrl || m.public_url}
+                              className="h-full w-full object-cover"
+                              muted
+                              preload="metadata"
+                              onError={(e) => { const el = e.currentTarget as HTMLElement; el.style.display = 'none'; const sib = el.nextElementSibling as HTMLElement | null; if (sib) sib.style.display = 'flex'; }}
+                            />
+                          )}
+                          <div style={{ display: 'none' }} className="h-full w-full flex items-center justify-center text-xs">Preview unavailable</div>
+                        </div>
+                        <div className="text-xs truncate mt-1">{m.filename}</div>
+                        <div className="text-[10px] text-[color:var(--color-muted)] font-mono">{formatBytes(m.size_bytes)} · {formatDuration(m.duration_sec)}</div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
               <div className="flex flex-col justify-start gap-2">
@@ -390,13 +424,28 @@ export default function ProviderWorkspace({ provider }: { provider: Provider }) 
               </div>
             </div>
             {selected && (
-              <div className="mt-3 surface-2 rounded-lg p-3 flex items-center justify-between">
-                <div className="text-xs">
-                  <div className="font-medium">{selected.filename}</div>
-                  <div className="text-[color:var(--color-muted)] font-mono">{formatBytes(selected.size_bytes)} · {formatDuration(selected.duration_sec)} · {selected.width || '?'}×{selected.height || '?'}</div>
+              <>
+                <div className="mt-3 surface-2 rounded-lg p-3 flex items-center justify-between">
+                  <div className="text-xs">
+                    <div className="font-medium">{selected.filename}</div>
+                    <div className="text-[color:var(--color-muted)] font-mono">{formatBytes(selected.size_bytes)} · {formatDuration(selected.duration_sec)} · {selected.width || '?'}×{selected.height || '?'}</div>
+                  </div>
+                  <button onClick={() => analyzeAsset()} disabled={analyzing} className="btn btn-outline">{analyzing ? <Loader2 size={14} className="animate-spin"/> : <Wand2 size={14}/>} Analyze</button>
                 </div>
-                <button onClick={() => analyzeAsset()} disabled={analyzing} className="btn btn-outline">{analyzing ? <Loader2 size={14} className="animate-spin"/> : <Wand2 size={14}/>} Analyze</button>
-              </div>
+                {(selected.kind === 'video' && selected.storage_path) && (
+                  <div className="mt-3 aspect-video w-full bg-[color:var(--color-bg)] rounded overflow-hidden">
+                    <video
+                      src={`/api/media/proxy?path=${encodeURIComponent(selected.storage_path)}`}
+                      className="h-full w-full object-cover"
+                      controls
+                      muted
+                      preload="metadata"
+                      onError={(e) => { const el = e.currentTarget as HTMLElement; el.style.display = 'none'; const sib = el.nextElementSibling as HTMLElement | null; if (sib) sib.style.display = 'flex'; }}
+                    />
+                    <div style={{ display: 'none' }} className="h-full w-full flex items-center justify-center text-xs text-[color:var(--color-muted)]">Preview unavailable</div>
+                  </div>
+                )}
+              </>
             )}
           </Section>
 

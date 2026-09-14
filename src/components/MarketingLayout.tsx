@@ -1,11 +1,14 @@
-import { Link, Outlet } from 'react-router-dom'
+import { Link, Outlet, Navigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { Moon, Sun, Waves } from 'lucide-react'
 
 export default function MarketingLayout() {
-  const { user } = useAuth()
+  const { user, loading } = useAuth()
   const { resolved, setTheme } = useTheme()
+  const [params] = useSearchParams()
+  if (loading) return null
+  if (user) return <Navigate to={params.get('next') || '/dashboard'} replace />
   return (
     <div className="min-h-screen flex flex-col">
       <header className="border-b border-[color:var(--color-border)] bg-[color:var(--color-bg)]/80 backdrop-blur sticky top-0 z-40">
@@ -21,14 +24,12 @@ export default function MarketingLayout() {
             <button className="btn btn-ghost" onClick={() => setTheme(resolved === 'dark' ? 'light' : 'dark')} title="Toggle theme">
               {resolved === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
             </button>
-            {user ? (
-              <Link to="/dashboard" className="btn btn-primary">Open app</Link>
-            ) : (
+            {!user ? (
               <>
                 <Link to="/login" className="btn btn-ghost">Sign in</Link>
                 <Link to="/signup" className="btn btn-primary">Start free</Link>
               </>
-            )}
+            ) : null}
           </nav>
         </div>
       </header>
@@ -40,6 +41,8 @@ export default function MarketingLayout() {
             <a className="link" href="https://developers.google.com/youtube/v3" target="_blank" rel="noreferrer">YouTube API</a>
             <a className="link" href="https://developers.tiktok.com/" target="_blank" rel="noreferrer">TikTok API</a>
             <a className="link" href="https://developers.facebook.com/docs/instagram-api" target="_blank" rel="noreferrer">Meta Graph</a>
+            <Link to="/privacy-policy" className="link">Privacy Policy</Link>
+            <Link to="/terms" className="link">Terms of Service</Link>
           </div>
         </div>
       </footer>

@@ -13,13 +13,19 @@
 //   3. Admin/system default derived from environment (OPENROUTER_API_KEY /
 //      OPENAI_API_KEY) — never another user's credentials.
 //
+// Model resolution priority:
+//   1. User-selected model with user's own OpenRouter key
+//   2. User-selected model with platform OpenRouter key
+//   3. Platform default model
+//   4. Return a clear configuration error if no valid model/provider is available
+//
 // A resolution is logged into ai_usage_events with { provider, model, tokens,
 // latency, status } — NEVER the API key or the prompt text.
 
 import supabase from './db-client.js';
 import { decryptSecret } from './_crypto.js';
-import { SUPPORTED_PROVIDERS, envDefaults, isConfigured } from './_ai_registry.js';
-export { SUPPORTED_PROVIDERS, envDefaults, isConfigured } from './_ai_registry.js';
+import { SUPPORTED_PROVIDERS, envDefaults, isConfigured, fetchOpenRouterModels } from './_ai_registry.js';
+export { SUPPORTED_PROVIDERS, envDefaults, isConfigured, fetchOpenRouterModels } from './_ai_registry.js';
 
 // ------------------------------------------------------------------
 // Resolution
@@ -36,15 +42,48 @@ async function resolveCandidates(userId) {
   const primary = userCfgs.filter((c) => c.is_primary);
   const fallbacks = userCfgs.filter((c) => !c.is_primary && c.allow_fallback);
   const env = envDefaults();
-  const chain = [...primary, ...fallbacks].map((c) => ({
+
+  // Build user config chain, preserving selected model
+  const userChain = [...primary, ...fallbacks].map((c) => ({
     source: 'user',
     id: c.id,
     provider: c.provider,
-    model: c.model || SUPPORTED_PROVIDERS[c.provider]?.default_model,
-    base_url: c.base_url || SUPPORTED_PROVIDERS[c.provider]?.default_base_url,
+    model: c.model || SUPPORTED_PROVIDERS[c.provider]?.default_model || null,
+    base_url: c.base_url || SUPPORTED_PROVIDERS[c.provider]?.default_base_url || null,
     _keyCiphertext: c.api_key_ciphertext,
+    // Track if this config has a user-selected model (not just the default)
+    _selectedModel: !!c.model,
   }));
-  return [...chain, ...env];
+
+  // Validate user-selected models against OpenRouter (only for user-owned keys)
+  // We do this lazily - validate on first use rather than on every request
+  const validatedChain = await Promise.all(userChain.map(async (cand) => {
+    let key = null;
+    if (cand.source === 'user' && cand._keyCiphertext) {
+      try { key = decryptSecret(cand._keyCiphertext); } catch { key = null; }
+    }
+
+    // If this config has a user-selected model and uses OpenRouter, validate it
+    if (cand._selectedModel && cand.provider === 'openrouter' && key) {
+      const models = await fetchOpenRouterModels(key);
+      if (models) {
+        const isAvailable = models.some((m) => m.id === cand.model || m.name === cand.model);
+        if (!isAvailable) {
+          // Model no longer available, fall back to default
+          return {
+            ...cand,
+            model: SUPPORTED_PROVIDERS.openrouter.default_model,
+            // Clear the selected model flag so it falls back gracefully
+            _selectedModel: false,
+          };
+        }
+      }
+      // If API fails, keep the selected model and let the request fail or try fallback
+    }
+    return cand;
+  }));
+
+  return [...validatedChain, ...env];
 }
 
 export async function isConfiguredFor(userId) {
@@ -76,6 +115,7 @@ export async function generateText(userId, { messages, temperature = 0.5, respon
   for (const cand of candidates) {
     const key = keyFor(cand);
     if (needsKey(cand.provider) && !key) { lastErr = new AiError('MISSING_KEY', `Provider ${cand.provider} has no key.`); continue; }
+
     // Rate limit users when they are burning the shared platform key. Users with
     // their own key skip this — they pay for their own tokens.
     if (cand.source === 'env' && userId) {

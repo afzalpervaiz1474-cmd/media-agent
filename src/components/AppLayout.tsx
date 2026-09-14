@@ -1,7 +1,7 @@
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, FileText, Upload, Users, Youtube, Music2, Instagram, Facebook,
-  Workflow, ListChecks, Bot, Settings as SettingsIcon, LogOut, Moon, Sun, Waves, Bell, Search, Command, Menu, Radio,
+  Workflow, ListChecks, Bot, Settings as SettingsIcon, LogOut, Moon, Sun, Waves, Bell, Search, Command, Menu, Radio, Scale,
 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
@@ -66,6 +66,10 @@ export default function AppLayout() {
           <div>
             <div className="label px-3 mb-2">Automation</div>
             <Section items={ops} />
+          </div>
+          <div>
+            <div className="label px-3 mb-2">Legal</div>
+            <Section items={[{ to: '/privacy-policy', icon: FileText, label: 'Privacy Policy' }, { to: '/terms', icon: Scale, label: 'Terms' }]} />
           </div>
           <div>
             <div className="label px-3 mb-2">Account</div>

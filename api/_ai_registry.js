@@ -8,6 +8,9 @@ export const SUPPORTED_PROVIDERS = {
     default_model: 'openai/gpt-4o-mini',
     needs_key: true,
     supports_json_mode: true,
+    // Model metadata fetched from OpenRouter API
+    // { id, name, description, context_length, pricing, enabled, tags }
+    model_info: null, // cached model info, populated server-side
   },
   openai: {
     name: 'OpenAI',
@@ -76,4 +79,34 @@ export function envDefaults() {
 
 export function isConfigured() {
   return !!(process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY);
+}
+
+// Fetch models from OpenRouter API (server-side only, never exposes the key)
+export async function fetchOpenRouterModels(apiKey) {
+  if (!apiKey) return null;
+  const url = 'https://openrouter.ai/api/v1/models';
+  const headers = {
+    'Authorization': `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+  };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const r = await fetch(url, { method: 'GET', headers, signal: controller.signal });
+    clearTimeout(timeout);
+    if (!r.ok) return null;
+    const data = await r.json();
+    const formatted = (data.data || []).map((m) => ({
+      id: m.id,
+      name: m.name || m.id,
+      description: m.description,
+      context_length: m.context_length,
+      pricing: m.pricing,
+      enabled: m.enabled,
+      tags: m.tags || [],
+    }));
+    return formatted;
+  } catch {
+    return null;
+  }
 }

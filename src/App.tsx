@@ -24,6 +24,8 @@ import SettingsSecurity from './pages/SettingsSecurity'
 import SettingsNotifications from './pages/SettingsNotifications'
 import SettingsAiProviders from './pages/SettingsAiProviders'
 import NotFound from './pages/NotFound'
+import PrivacyPolicy from './pages/PrivacyPolicy'
+import Terms from './pages/Terms'
 
 export default function App() {
   return (
@@ -60,6 +62,8 @@ export default function App() {
       </Route>
 
       <Route path="/logout" element={<Logout />} />
+      <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+      <Route path="/terms" element={<Terms />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   )

@@ -19,13 +19,15 @@ export default async function handler(req, res) {
     if (!meta) return res.status(404).json({ error: 'Unknown provider' });
 
     const cfg = providerConfigStatus()[provider];
-    if (!cfg.configured) {
+    if (!cfg || !cfg.configured) {
+      const missing = cfg?.missing || Object.keys(PROVIDER_META[provider]?.envKeys || []).filter((k) => !process.env[k]);
       return res.status(200).json({
         configured: false,
         provider,
-        missing: cfg.missing,
+        missing,
+        testing: process.env.OAUTH_TESTING_MODE !== 'false',
         docs: meta.docs,
-        note: `Set ${cfg.missing.join(', ')} in the server environment to enable ${meta.name} OAuth. Redirect URI must match your provider app config; if omitted, it defaults to /api/oauth/${provider}/callback on this origin.`,
+        note: `Set ${missing.join(', ')} in the server environment to enable ${meta.name} OAuth. Redirect URI must match your provider app config; if omitted, it defaults to /api/oauth/${provider}/callback on this origin.`,
       });
     }
 
@@ -34,16 +36,27 @@ export default async function handler(req, res) {
     const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
     const redirectUri = resolveRedirectUri(req, provider);
 
+    const channelUrl = (req.query.channel && typeof req.query.channel === 'string') ? req.query.channel.trim() : '';
     await supabase.from('oauth_states').insert({
       state,
       user_id: user.id,
       provider,
       code_verifier: codeVerifier,
+      channel_url: channelUrl,
       redirect_to: (req.query.next && typeof req.query.next === 'string') ? req.query.next : `/${provider}`,
     });
 
     let url;
     if (provider === 'youtube') {
+      if (!process.env.YOUTUBE_CLIENT_ID || !process.env.YOUTUBE_CLIENT_SECRET) {
+        return res.status(200).json({
+          configured: false,
+          provider,
+          missing: ['YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET'],
+          docs: meta.docs,
+          note: 'Missing YouTube OAuth client credentials in server environment.',
+        });
+      }
       const params = new URLSearchParams({
         client_id: process.env.YOUTUBE_CLIENT_ID,
         redirect_uri: redirectUri,
@@ -56,6 +69,9 @@ export default async function handler(req, res) {
       });
       url = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
     } else if (provider === 'tiktok') {
+      if (!process.env.TIKTOK_CLIENT_KEY || !process.env.TIKTOK_CLIENT_SECRET) {
+        return res.status(200).json({ configured: false, provider, missing: ['TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET'], docs: meta.docs, note: 'Missing TikTok OAuth credentials in server environment.' });
+      }
       const params = new URLSearchParams({
         client_key: process.env.TIKTOK_CLIENT_KEY,
         response_type: 'code',
@@ -67,6 +83,9 @@ export default async function handler(req, res) {
       });
       url = `https://www.tiktok.com/v2/auth/authorize/?${params}`;
     } else if (provider === 'instagram' || provider === 'facebook') {
+      if (!process.env.META_APP_ID || !process.env.META_APP_SECRET) {
+        return res.status(200).json({ configured: false, provider, missing: ['META_APP_ID', 'META_APP_SECRET'], docs: meta.docs, note: 'Missing Meta OAuth credentials in server environment.' });
+      }
       const params = new URLSearchParams({
         client_id: process.env.META_APP_ID,
         redirect_uri: redirectUri,
@@ -77,7 +96,11 @@ export default async function handler(req, res) {
       url = `https://www.facebook.com/v20.0/dialog/oauth?${params}`;
     }
 
-    return res.status(200).json({ configured: true, url, provider, redirect_uri: redirectUri });
+    if (!url) {
+      return res.status(500).json({ error: 'Failed to generate authorization URL' });
+    }
+
+    return res.status(200).json({ configured: true, url, provider, redirect_uri: redirectUri, testing: process.env.OAUTH_TESTING_MODE !== 'false' });
   } catch (err) {
     console.error('oauth start error', err);
     res.status(500).json({ error: safeError(err) });

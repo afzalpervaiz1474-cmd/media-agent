@@ -102,7 +102,7 @@ export default async function handler(req, res) {
     const hasWarn = checks.some((c) => c.status === 'WARNING');
     const overall = hasFail ? 'FAIL' : hasWarn ? 'WARNING' : 'PASS';
 
-    res.status(200).json({ provider, overall, checks, meta: { name: meta.name, docs: meta.docs } });
+    res.status(200).json({ provider, overall, checks, meta: { name: meta.name, docs: meta.docs }, testing: process.env.OAUTH_TESTING_MODE !== 'false' });
   } catch (err) {
     console.error('health check error', err);
     res.status(500).json({ error: safeError(err) });
