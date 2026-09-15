@@ -79,7 +79,7 @@ function buildApiIndex(): Array<{ path: string; pattern: RegExp; specificity: nu
       // Strip the /api prefix so patterns match (patterns are relative to api/)
       const rawUrl = req.url || '/';
       const urlPath = rawUrl.split('?')[0].replace(/^\/api\/?/, '');
-      const urlObj = new URL(rawUrl, `http://${req.headers.host || 'localhost'}`);
+      const urlObj = new URL(rawUrl, `http://${req.headers.host || process.env.APP_HOST || 'localhost'}`);
       const queryParams: Record<string, string> = {};
       urlObj.searchParams.forEach((value, key) => { queryParams[key] = value; });
       req.query = queryParams;

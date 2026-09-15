@@ -125,6 +125,6 @@ export function resolveRedirectUri(req, provider) {
   const fromEnv = process.env[envKey];
   if (fromEnv) return fromEnv;
   const proto = (req.headers['x-forwarded-proto'] || (req.connection && req.connection.encrypted ? 'https' : 'http')).toString().split(',')[0];
-  const host = (req.headers['x-forwarded-host'] || req.headers.host || 'localhost:3000').toString().split(',')[0];
+  const host = (req.headers['x-forwarded-host'] || req.headers.host || process.env.APP_HOST || 'localhost:3000').toString().split(',')[0];
   return `${proto}://${host}/api/oauth/${provider}/callback`;
 }
