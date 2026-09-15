@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { providerConfigStatus, resolveRedirectUri, PROVIDER_META } from '../api/_providers.js';
+import { providerConfigStatus, resolveRedirectUri, PROVIDER_META } from '../lib/server/_providers.js';
 
 const originalEnv = { ...process.env };
 

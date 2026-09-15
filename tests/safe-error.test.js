@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { safeError } from '../api/_safe.js';
+import { safeError } from '../lib/server/_safe.js';
 
 describe('safeError', () => {
   it('redacts OpenAI-style secret keys', () => {

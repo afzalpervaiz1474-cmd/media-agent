@@ -105,7 +105,7 @@ function buildApiIndex(): Array<{ path: string; pattern: RegExp; specificity: nu
         }
       }
       const mod = await import(pathToFileURL(match.path).href);
-      const handler = mod.default;
+      const handler = mod.handler || mod.default;
       if (!handler || typeof handler !== 'function') {
         for (const [k, v] of Object.entries(CORS_HEADERS)) res.setHeader(k, v);
         res.statusCode = 404;

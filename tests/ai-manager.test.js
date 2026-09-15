@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SUPPORTED_PROVIDERS, envDefaults, isConfigured, fetchOpenRouterModels } from '../api/_ai_registry.js';
-import { encryptSecret, decryptSecret, keyHint } from '../api/_crypto.js';
+import { SUPPORTED_PROVIDERS, envDefaults, isConfigured, fetchOpenRouterModels } from '../lib/server/_ai_registry.js';
+import { encryptSecret, decryptSecret, keyHint } from '../lib/server/_crypto.js';
 
 const originalEnv = { ...process.env };
 
