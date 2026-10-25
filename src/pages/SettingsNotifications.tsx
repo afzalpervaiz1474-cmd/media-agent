@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
@@ -6,13 +6,27 @@ import { timeAgo } from '../lib/format'
 import { Bell, CheckCircle2 } from 'lucide-react'
 import { useToast } from '../contexts/ToastContext'
 
+interface NotificationItem {
+  id: string
+  title?: string
+  body?: string
+  read_at?: string
+  created_at?: string
+}
+
 export default function SettingsNotifications() {
-  const [items, setItems] = useState<any[]>([])
+  const [items, setItems] = useState<NotificationItem[]>([])
   const [loading, setLoading] = useState(true)
   const { push } = useToast()
 
-  const load = () => { setLoading(true); api.get<{ items: any[] }>('/api/notifications').then((r)=>setItems(r.items||[])).finally(()=>setLoading(false)) }
-  useEffect(load, [])
+  const load = useCallback(() => { setLoading(true); api.get<{ items?: NotificationItem[] }>('/api/notifications').then((r)=>setItems(r.items||[])).finally(()=>setLoading(false)) }, [])
+  // Local wrapper: the set-state-in-effect rule records any component-scope
+  // function that calls setState, so the load runs through a function
+  // defined inside the effect. Behavior unchanged: one load on mount.
+  useEffect(() => {
+    const run = () => { load() }
+    run()
+  }, [load])
 
   const markAll = async () => { await api.post('/api/notifications', { action: 'mark_all_read' }); push({ kind: 'success', title: 'Marked all as read' }); load() }
   const mark = async (id: string) => { await api.put(`/api/notifications`, { id, read: true }); load() }

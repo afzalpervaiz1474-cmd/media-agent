@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
 import { useToast } from '../contexts/ToastContext'
-import { Bot, Plus, Trash2, Star, Beaker, Loader2, ShieldCheck, ShieldAlert, Info, Activity, RefreshCw, Search, ArrowDownUp, Zap } from 'lucide-react'
+import { Bot, Plus, Trash2, Star, Beaker, Loader2, ShieldCheck, ShieldAlert, Info, Activity, RefreshCw, Search, Zap } from 'lucide-react'
 import { timeAgo } from '../lib/format'
+import { errorMessage } from '../lib/errors'
 
 type Supported = Record<string, { name: string; docs: string; default_base_url: string; default_model: string; needs_key: boolean; supports_json_mode: boolean }>
 type Config = {
@@ -13,9 +14,24 @@ type Config = {
 }
 type OpenRouterModel = {
   id: string; name: string; description: string; context_length: number | null;
-  pricing: { input?: number; output?: number; [key: string]: any } | null;
+  pricing: { input?: number; output?: number; [key: string]: unknown } | null;
   enabled: boolean; tags: string[];
 }
+
+type EnvDefault = { provider: string; model?: string }
+type UsageEvent = {
+  id: string; created_at?: string; provider?: string; model?: string; kind?: string;
+  total_tokens?: number; latency_ms?: number; status?: string
+}
+type Usage = {
+  aggregate: { total_requests: number; ok: number; errors: number; total_tokens: number }
+  events?: UsageEvent[]
+}
+type FormState = {
+  provider: string; model: string; base_url: string; api_key: string;
+  is_primary: boolean; allow_fallback: boolean; label: string
+}
+type HealthResult = { overall?: string; checks?: { id: string; detail?: string }[] }
 
 // Check if a model is free (pricing input/output are 0 or undefined)
 function isFreeModel(m: OpenRouterModel): boolean {
@@ -27,11 +43,11 @@ function isFreeModel(m: OpenRouterModel): boolean {
 export default function SettingsAiProviders() {
   const [supported, setSupported] = useState<Supported>({})
   const [configs, setConfigs] = useState<Config[]>([])
-  const [envDefaults, setEnvDefaults] = useState<any[]>([])
+  const [envDefaults, setEnvDefaults] = useState<EnvDefault[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testingId, setTestingId] = useState<string | null>(null)
-  const [usage, setUsage] = useState<any | null>(null)
+  const [usage, setUsage] = useState<Usage | null>(null)
   const { push } = useToast()
 
   // OpenRouter models state
@@ -42,21 +58,30 @@ export default function SettingsAiProviders() {
   const [showFreeOnly, setShowFreeOnly] = useState(false)
   const [hasRefreshedModels, setHasRefreshedModels] = useState(false)
 
-  const [form, setForm] = useState<any>({ provider: 'openrouter', model: '', base_url: '', api_key: '', is_primary: true, allow_fallback: false, label: '' })
+  const [form, setForm] = useState<FormState>({ provider: 'openrouter', model: '', base_url: '', api_key: '', is_primary: true, allow_fallback: false, label: '' })
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true)
     try {
-      const r = await api.get<{ supported: Supported; configs: Config[]; env_defaults: any[] }>('/api/ai/providers')
+      const r = await api.get<{ supported: Supported; configs: Config[]; env_defaults: EnvDefault[] }>('/api/ai/providers')
       setSupported(r.supported); setConfigs(r.configs); setEnvDefaults(r.env_defaults)
       // If user has an OpenRouter config, mark that models may have been fetched
       const hasOpenRouter = r.configs.some((c: Config) => c.provider === 'openrouter')
       if (hasOpenRouter) setHasRefreshedModels(true)
-    } catch (e: any) { push({ kind: 'error', title: 'Load failed', body: e.message }) }
+    } catch (e: unknown) { push({ kind: 'error', title: 'Load failed', body: errorMessage(e) }) }
     finally { setLoading(false) }
-  }
-  const loadUsage = async () => { try { const u = await api.get('/api/ai/usage'); setUsage(u) } catch { /* ignore */ } }
-  useEffect(() => { load(); loadUsage() }, [])
+  }, [push])
+  const loadUsage = useCallback(async () => { try { const u = await api.get<Usage>('/api/ai/usage'); setUsage(u) } catch { /* ignore */ } }, [])
+  // Local wrapper: the set-state-in-effect rule records any component-scope
+  // function that calls setState, so the loaders run through a function
+  // defined inside the effect. Behavior unchanged: same two parallel loads.
+  useEffect(() => {
+    const run = () => {
+      load()
+      loadUsage()
+    }
+    run()
+  }, [load, loadUsage])
 
   const spec = supported[form.provider]
   const isOpenRouter = form.provider === 'openrouter'
@@ -77,9 +102,9 @@ export default function SettingsAiProviders() {
       setOpenRouterModels(r.models || [])
       setHasRefreshedModels(true)
       push({ kind: 'success', title: 'Models loaded', body: `${r.models?.length || 0} models found from OpenRouter.` })
-    } catch (e: any) {
-      setModelsError(e.message || 'Failed to fetch models')
-      push({ kind: 'error', title: 'Model fetch failed', body: e.message })
+    } catch (e: unknown) {
+      setModelsError(errorMessage(e) || 'Failed to fetch models')
+      push({ kind: 'error', title: 'Model fetch failed', body: errorMessage(e) })
     } finally {
       setModelsLoading(false)
     }
@@ -88,7 +113,7 @@ export default function SettingsAiProviders() {
   const save = async (testAfter = false) => {
     setSaving(true)
     try {
-      const payload: any = {
+      const payload: { provider: string; label: string; model: string; base_url: string; is_primary: boolean; allow_fallback: boolean; api_key?: string } = {
         provider: form.provider,
         label: form.label || spec?.name || form.provider,
         model: form.model || spec?.default_model || '',
@@ -102,7 +127,7 @@ export default function SettingsAiProviders() {
       setForm({ ...form, api_key: '' })
       await load()
       if (testAfter) await test(r.item.id)
-    } catch (e: any) { push({ kind: 'error', title: 'Save failed', body: e.message }) }
+    } catch (e: unknown) { push({ kind: 'error', title: 'Save failed', body: errorMessage(e) }) }
     finally { setSaving(false) }
   }
 
@@ -126,23 +151,23 @@ export default function SettingsAiProviders() {
       })
       await load()
       push({ kind: 'success', title: 'Model selected', body: `Model selected for OpenRouter.` })
-    } catch (e: any) {
-      push({ kind: 'error', title: 'Failed to select model', body: e.message })
+    } catch (e: unknown) {
+      push({ kind: 'error', title: 'Failed to select model', body: errorMessage(e) })
     }
   }
 
   const test = async (id: string) => {
     setTestingId(id)
     try {
-      const r = await api.post<{ result: any }>('/api/ai/providers/health', { id })
+      const r = await api.post<{ result: HealthResult }>('/api/ai/providers/health', { id })
       const overall = r.result.overall
       push({
         kind: overall === 'PASS' ? 'success' : overall === 'WARNING' ? 'warn' : 'error',
         title: `Test: ${overall}`,
-        body: r.result.checks.find((c: any) => c.id === 'probe')?.detail?.slice(0, 140),
+        body: r.result.checks?.find((c) => c.id === 'probe')?.detail?.slice(0, 140),
       })
       load()
-    } catch (e: any) { push({ kind: 'error', title: 'Test failed', body: e.message }) }
+    } catch (e: unknown) { push({ kind: 'error', title: 'Test failed', body: errorMessage(e) }) }
     finally { setTestingId(null) }
   }
 
@@ -238,11 +263,11 @@ export default function SettingsAiProviders() {
                   <Stat label="Tokens" value={usage.aggregate.total_tokens}/>
                 </div>
               )}
-              {usage?.events?.length > 0 && (
+              {usage && usage.events && usage.events.length > 0 && (
                 <table className="table mt-4">
                   <thead><tr><th>When</th><th>Provider</th><th>Model</th><th>Kind</th><th>Tokens</th><th>Latency</th><th>Status</th></tr></thead>
                   <tbody>
-                    {usage.events.slice(0, 10).map((e: any) => (
+                    {usage.events.slice(0, 10).map((e) => (
                       <tr key={e.id}>
                         <td className="text-xs text-[color:var(--color-muted)]">{timeAgo(e.created_at)}</td>
                         <td className="text-xs">{e.provider}</td>

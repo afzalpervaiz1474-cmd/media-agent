@@ -3,16 +3,25 @@ import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
 import { Youtube, Music2, Instagram, Facebook, ShieldAlert, CheckCircle2, ExternalLink, PlugZap, ArrowUpRight } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { timeAgo } from '../lib/format'
 
-const ICONS: Record<string, any> = { youtube: Youtube, tiktok: Music2, instagram: Instagram, facebook: Facebook }
+const ICONS: Record<string, LucideIcon> = { youtube: Youtube, tiktok: Music2, instagram: Instagram, facebook: Facebook }
+
+interface AccountProviderState {
+  configured?: boolean
+  account?: { avatar_url?: string; display_name?: string; handle?: string; last_synced_at?: string }
+  tokenHealth?: { expired?: boolean }
+  meta?: { name?: string; docs?: string; scopes?: string[] }
+  missing?: string[]
+}
 
 export default function Accounts() {
-  const [providers, setProviders] = useState<Record<string, any>>({})
+  const [providers, setProviders] = useState<Record<string, AccountProviderState>>({})
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    api.get<{ providers: any }>(`/api/accounts`)
+    api.get<{ providers: Record<string, AccountProviderState> }>(`/api/accounts`)
       .then((r) => setProviders(r.providers))
       .finally(() => setLoading(false))
   }, [])
@@ -35,7 +44,7 @@ export default function Accounts() {
             <div key={p} className="card">
               <div className="p-5 flex items-start gap-4">
                 <div className="h-12 w-12 rounded-lg bg-[color:var(--color-surface-2)] grid place-items-center overflow-hidden flex-shrink-0">
-                  {connected && s.account.avatar_url ? <img src={s.account.avatar_url} alt="" className="h-full w-full object-cover"/> : <Icon size={22}/>}
+                  {connected && s.account?.avatar_url ? <img src={s.account?.avatar_url} alt="" className="h-full w-full object-cover"/> : <Icon size={22}/>}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-3">
@@ -45,14 +54,14 @@ export default function Accounts() {
                     ) : configured ? <span className="chip chip-warn">Not connected</span> : <span className="chip chip-danger"><ShieldAlert size={12}/> Config required</span>}
                   </div>
                   {connected ? (
-                    <div className="mt-1 text-sm text-[color:var(--color-ink-2)] truncate">{s.account.display_name || s.account.handle}</div>
+                    <div className="mt-1 text-sm text-[color:var(--color-ink-2)] truncate">{s.account?.display_name || s.account?.handle}</div>
                   ) : (
-                    <div className="mt-1 text-sm text-[color:var(--color-muted)]">Scopes: {s.meta?.scopes?.slice(0, 3).join(', ')}{s.meta?.scopes?.length > 3 ? '…' : ''}</div>
+                    <div className="mt-1 text-sm text-[color:var(--color-muted)]">Scopes: {s.meta?.scopes?.slice(0, 3).join(', ')}{(s.meta?.scopes?.length ?? 0) > 3 ? '…' : ''}</div>
                   )}
-                  {connected && s.account.last_synced_at && (
-                    <div className="text-xs text-[color:var(--color-muted)] mt-0.5">Synced {timeAgo(s.account.last_synced_at)}</div>
+                  {connected && s.account?.last_synced_at && (
+                    <div className="text-xs text-[color:var(--color-muted)] mt-0.5">Synced {timeAgo(s.account?.last_synced_at)}</div>
                   )}
-                  {!configured && s.missing?.length > 0 && (
+                  {!configured && s.missing && s.missing.length > 0 && (
                     <div className="mt-3 surface-2 rounded-lg p-3 text-xs">
                       <div className="font-medium mb-1">Add these to your server env:</div>
                       <div className="font-mono text-[color:var(--color-muted)]">{s.missing.join(', ')}</div>

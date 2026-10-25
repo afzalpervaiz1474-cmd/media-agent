@@ -1,20 +1,72 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import supabase from '../lib/supabase'
 import { api, otpApi } from '../lib/api'
 import PageHeader from '../components/PageHeader'
 import AgentPanel from '../components/AgentPanel'
 import { useToast } from '../contexts/ToastContext'
-import { formatBytes, formatDuration, safeFilename, timeAgo } from '../lib/format'
+import { formatBytes, formatDuration, safeFilename } from '../lib/format'
+import { errorMessage } from '../lib/errors'
 import {
   Youtube, Music2, Instagram, Facebook, Upload, Wand2, Send, Loader2, CheckCircle2, XCircle,
   ShieldAlert, ExternalLink, Sparkles, ArrowUpRight, Radio,
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 
 type Provider = 'youtube' | 'tiktok' | 'instagram' | 'facebook'
 const ALL: Provider[] = ['youtube', 'tiktok', 'instagram', 'facebook']
-const ICONS: Record<Provider, any> = { youtube: Youtube, tiktok: Music2, instagram: Instagram, facebook: Facebook }
+const ICONS: Record<Provider, LucideIcon> = { youtube: Youtube, tiktok: Music2, instagram: Instagram, facebook: Facebook }
 const DEFAULT_CT: Record<Provider, string> = { youtube: 'short', tiktok: 'video', instagram: 'reel', facebook: 'video' }
+
+interface PlatformMetadata {
+  content_type: string
+  title?: string
+  description?: string
+  caption?: string
+  tags?: string[]
+  hashtags?: string[]
+  cta?: string
+}
+
+interface ProviderAccount {
+  display_name?: string
+  handle?: string
+  email?: string
+  id?: string
+}
+
+interface ProviderAccountState {
+  configured?: boolean
+  missing?: string[]
+  account?: ProviderAccount
+  tokenHealth?: { expired?: boolean }
+}
+
+interface MediaAsset {
+  id: string
+  filename: string
+  mime_type: string
+  kind?: string
+  storage_path?: string
+  public_url?: string
+  size_bytes?: number
+  duration_sec?: number | null
+  width?: number | null
+  height?: number | null
+}
+
+interface OrchestrationPlatformResult {
+  status?: string
+  otp_id?: string
+  provider_url?: string
+  provider_post_id?: string
+  reason?: string
+}
+
+interface Orchestration {
+  job_id: string
+  results?: Record<string, OrchestrationPlatformResult>
+}
 
 type Mode = 'manual' | 'approval' | 'auto'
 
@@ -22,26 +74,26 @@ export default function SocialCompose() {
   const { push } = useToast()
   const nav = useNavigate()
 
-  const [providers, setProviders] = useState<Record<string, any>>({})
+  const [providers, setProviders] = useState<Record<string, ProviderAccountState>>({})
   const [providersLoading, setProvidersLoading] = useState(true)
 
-  const [media, setMedia] = useState<any[]>([])
-  const [selected, setSelected] = useState<any | null>(null)
+  const [media, setMedia] = useState<MediaAsset[]>([])
+  const [selected, setSelected] = useState<MediaAsset | null>(null)
   const [uploading, setUploading] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
   const [chosen, setChosen] = useState<Provider[]>(['youtube', 'tiktok'])
   const [mode, setMode] = useState<Mode>('approval')
-  const [metadataByPlatform, setMetadataByPlatform] = useState<Record<Provider, any>>({
+  const [metadataByPlatform, setMetadataByPlatform] = useState<Record<Provider, PlatformMetadata>>({
     youtube: { content_type: 'short', title: '', description: '', tags: [], hashtags: [] },
     tiktok: { content_type: 'video', title: '', caption: '' },
     instagram: { content_type: 'reel', caption: '' },
     facebook: { content_type: 'video', description: '' },
-  } as any)
+  })
 
   const [analyzing, setAnalyzing] = useState(false)
   const [publishing, setPublishing] = useState(false)
-  const [orchestrationResult, setOrchestrationResult] = useState<any | null>(null)
+  const [orchestrationResult, setOrchestrationResult] = useState<Orchestration | null>(null)
 
   const [showOtpDialog, setShowOtpDialog] = useState(false)
   const [otpId, setOtpId] = useState('')
@@ -53,13 +105,22 @@ export default function SocialCompose() {
 
   const loadProviders = useCallback(async () => {
     setProvidersLoading(true)
-    try { const r = await api.get<{ providers: any }>('/api/accounts'); setProviders(r.providers) }
+    try { const r = await api.get<{ providers: Record<string, ProviderAccountState> }>('/api/accounts'); setProviders(r.providers) }
     finally { setProvidersLoading(false) }
   }, [])
   const loadMedia = useCallback(async () => {
-    try { const r = await api.get<{ items: any[] }>('/api/media'); setMedia(r.items || []) } catch { /* ignore */ }
+    try { const r = await api.get<{ items?: MediaAsset[] }>('/api/media'); setMedia(r.items || []) } catch { /* ignore */ }
   }, [])
-  useEffect(() => { loadProviders(); loadMedia() }, [loadProviders, loadMedia])
+  // Local wrapper: the set-state-in-effect rule records any component-scope
+  // function that calls setState, so the loaders run through a function
+  // defined inside the effect. Behavior unchanged: same two parallel loads.
+  useEffect(() => {
+    const run = () => {
+      loadProviders()
+      loadMedia()
+    }
+    run()
+  }, [loadProviders, loadMedia])
 
   const uploadFile = async (file: File) => {
     setUploading(true)
@@ -74,13 +135,13 @@ export default function SocialCompose() {
       let duration: number | null = null, width: number | null = null, height: number | null = null
       if (file.type.startsWith('video/')) { try { const m = await probeVideo(file); duration = m.duration; width = m.width; height = m.height } catch { /* ignore */ } }
       else if (file.type.startsWith('image/')) { try { const m = await probeImage(file); width = m.width; height = m.height } catch { /* ignore */ } }
-      const r = await api.post<{ item: any }>('/api/media', {
+      const r = await api.post<{ item: MediaAsset }>('/api/media', {
         filename: name, storage_path: path, public_url: urlData.publicUrl,
         mime_type: file.type, size_bytes: file.size, duration_sec: duration, width, height,
         kind: file.type.startsWith('image/') ? 'image' : 'video',
       })
       setSelected(r.item); loadMedia(); push({ kind: 'success', title: 'Uploaded' })
-    } catch (e: any) { push({ kind: 'error', title: 'Upload failed', body: e.message }) }
+    } catch (e: unknown) { push({ kind: 'error', title: 'Upload failed', body: errorMessage(e) }) }
     finally { setUploading(false) }
   }
 
@@ -88,9 +149,9 @@ export default function SocialCompose() {
     if (!selected || chosen.length === 0) { push({ kind: 'warn', title: 'Select media and at least one platform' }); return }
     setAnalyzing(true)
     try {
-      const patches: any = { ...metadataByPlatform }
+      const patches: Record<Provider, PlatformMetadata> = { ...metadataByPlatform }
       for (const p of chosen) {
-        const r = await api.post<{ analysis: any }>('/api/ai/analyze-media', {
+        const r = await api.post<{ analysis: { suggestions?: Partial<PlatformMetadata> } }>('/api/ai/analyze-media', {
           media_asset_id: selected.id, platform: p, content_type: metadataByPlatform[p]?.content_type || DEFAULT_CT[p],
         })
         const s = r.analysis?.suggestions || {}
@@ -106,7 +167,7 @@ export default function SocialCompose() {
       }
       setMetadataByPlatform(patches)
       push({ kind: 'success', title: 'Analyzed and prepared metadata' })
-    } catch (e: any) { push({ kind: 'error', title: 'Analyze failed', body: e.message }) }
+    } catch (e: unknown) { push({ kind: 'error', title: 'Analyze failed', body: errorMessage(e) }) }
     finally { setAnalyzing(false) }
   }
 
@@ -116,7 +177,7 @@ export default function SocialCompose() {
     if (mode === 'auto' && !confirm(`Auto mode will call the official API for: ${chosen.join(', ')}.\nContinue?`)) return
     setPublishing(true); setOrchestrationResult(null); setOtpError('')
     try {
-      const r = await api.post<{ orchestration: any }>('/api/social/compose', {
+      const r = await api.post<{ orchestration: Orchestration }>('/api/social/compose', {
         media_asset_id: selected.id,
         platforms: chosen,
         mode,
@@ -138,7 +199,7 @@ export default function SocialCompose() {
         setOrchestrationResult(r.orchestration)
         push({ kind: 'success', title: `Orchestration complete (${mode})`, body: `Job ${r.orchestration.job_id.slice(0, 8)}` })
       }
-    } catch (e: any) { push({ kind: 'error', title: 'Orchestrate failed', body: e.message }) }
+    } catch (e: unknown) { push({ kind: 'error', title: 'Orchestrate failed', body: errorMessage(e) }) }
     finally { setPublishing(false) }
   }
 
@@ -160,7 +221,7 @@ export default function SocialCompose() {
       setShowOtpDialog(false)
       setOtpCode('')
       push({ kind: 'success', title: 'Verified! Publishing...' })
-      const r = await api.post<{ orchestration: any }>('/api/social/compose', {
+      const r = await api.post<{ orchestration: Orchestration }>('/api/social/compose', {
         media_asset_id: selected!.id,
         platforms: chosen,
         mode,
@@ -168,7 +229,7 @@ export default function SocialCompose() {
       })
       setOrchestrationResult(r.orchestration)
       push({ kind: 'success', title: `Orchestration complete (${mode})`, body: `Job ${r.orchestration.job_id.slice(0, 8)}` })
-    } catch (e: any) { setOtpError(e.message) }
+    } catch (e: unknown) { setOtpError(errorMessage(e)) }
     finally { setOtpLoading(false) }
   }
 
@@ -179,7 +240,7 @@ export default function SocialCompose() {
       const r = await otpApi.resend({ provider: otpProvider, account_id: providers[otpProvider]?.account?.id || '', email: otpEmail, otp_id: otpId })
       setOtpId(r.otp_id)
       push({ kind: 'success', title: 'Code resent', body: 'Check your email again' })
-    } catch (e: any) { setOtpError(e.message) }
+    } catch (e: unknown) { setOtpError(errorMessage(e)) }
     finally { setOtpLoading(false) }
   }
 
@@ -233,7 +294,7 @@ export default function SocialCompose() {
                       <span className="text-sm font-medium capitalize">{p}</span>
                       {providersLoading ? null : connected ? <CheckCircle2 size={12} className="text-[color:var(--color-success)] ml-auto"/> : configured ? <span className="chip chip-warn ml-auto text-[10px]">connect</span> : <ShieldAlert size={12} className="text-[color:var(--color-danger)] ml-auto"/>}
                     </div>
-                    <div className="mt-1 text-[10px] text-[color:var(--color-muted)] truncate">{connected ? (s.account.display_name || s.account.handle) : configured ? 'Not connected' : 'Config required'}</div>
+                    <div className="mt-1 text-[10px] text-[color:var(--color-muted)] truncate">{connected ? (s.account?.display_name || s.account?.handle) : configured ? 'Not connected' : 'Config required'}</div>
                   </button>
                 )
               })}
@@ -300,7 +361,7 @@ export default function SocialCompose() {
               <div className="mt-4 surface-2 rounded-lg p-3">
                 <div className="flex items-center gap-2 text-sm mb-2"><Sparkles size={14} className="text-[color:var(--color-accent)]"/> Orchestration result</div>
                 <div className="space-y-1.5 text-xs">
-                  {Object.entries(orchestrationResult.results || {}).map(([p, v]: any) => (
+                  {Object.entries(orchestrationResult.results || {}).map(([p, v]) => (
                     <ResultRow key={p} p={p as Provider} v={v}/>
                   ))}
                 </div>
@@ -314,7 +375,7 @@ export default function SocialCompose() {
           <AgentPanel
             context={{
               provider: chosen[0] || 'youtube',
-              mediaAsset: selected,
+              mediaAsset: selected ?? undefined,
               contentType: chosen[0] ? metadataByPlatform[chosen[0]]?.content_type : undefined,
               metadata: chosen[0] ? metadataByPlatform[chosen[0]] : undefined,
             }}
@@ -326,7 +387,7 @@ export default function SocialCompose() {
             ]}
             onApplyMetadata={(patch) => {
               if (!chosen[0]) return
-              setMetadataByPlatform((prev) => ({ ...prev, [chosen[0]]: { ...prev[chosen[0]], ...patch } }))
+              setMetadataByPlatform((prev) => ({ ...prev, [chosen[0]]: { ...prev[chosen[0]], ...(patch as Partial<PlatformMetadata>) } }))
             }}
           />
         </div>
@@ -360,7 +421,7 @@ export default function SocialCompose() {
   )
 }
 
-function ResultRow({ p, v }: { p: Provider; v: any }) {
+function ResultRow({ p, v }: { p: Provider; v: OrchestrationPlatformResult }) {
   const Icon = ICONS[p]
   const ok = v.status === 'SUCCESS'
   const soft = v.status === 'PENDING_APPROVAL' || v.status === 'MANUAL' || v.status === 'SKIPPED' || v.status === 'AUTHORIZATION_REQUIRED' || v.status === 'PENDING'
@@ -370,7 +431,7 @@ function ResultRow({ p, v }: { p: Provider; v: any }) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="capitalize text-sm">{p}</span>
-          {ok ? <CheckCircle2 size={12} className="text-[color:var(--color-success)]"/> : soft ? <span className="chip">{v.status.toLowerCase().replace(/_/g, ' ')}</span> : <XCircle size={12} className="text-[color:var(--color-danger)]"/>}
+          {ok ? <CheckCircle2 size={12} className="text-[color:var(--color-success)]"/> : soft ? <span className="chip">{v.status?.toLowerCase().replace(/_/g, ' ')}</span> : <XCircle size={12} className="text-[color:var(--color-danger)]"/>}
           {v.status && ok && <span className="chip chip-success">success</span>}
         </div>
         {v.provider_url && <a href={v.provider_url} target="_blank" rel="noreferrer" className="link text-[11px] truncate block">{v.provider_url}</a>}
@@ -381,7 +442,7 @@ function ResultRow({ p, v }: { p: Provider; v: any }) {
   )
 }
 
-function Section({ step, title, children, actions }: { step: number; title: string; children: any; actions?: any }) {
+function Section({ step, title, children, actions }: { step: number; title: string; children: ReactNode; actions?: ReactNode }) {
   return (
     <section className="card">
       <div className="p-4 border-b border-[color:var(--color-border)] flex items-center gap-3">

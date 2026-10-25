@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
@@ -9,20 +9,35 @@ import {
   Activity, ArrowUpRight, FileText, ListChecks, Users, Workflow, PlayCircle, Sparkles,
   Youtube, Music2, Instagram, Facebook, CheckCircle2, ShieldAlert, PlugZap, Bell,
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 
-const ICONS: Record<string, any> = { youtube: Youtube, tiktok: Music2, instagram: Instagram, facebook: Facebook }
+const ICONS: Record<string, LucideIcon> = { youtube: Youtube, tiktok: Music2, instagram: Instagram, facebook: Facebook }
+
+type PublishRow = {
+  id: string; provider?: string; status?: string; provider_url?: string;
+  provider_post_id?: string; error?: string; created_at?: string
+}
+
+type NotificationRow = {
+  id: string; title?: string; body?: string; created_at?: string
+}
+
+type ProviderStatusEntry = {
+  name: string; configured: boolean; connected: boolean
+  account?: { avatar_url?: string; display_name?: string; handle?: string }
+}
 
 type Dash = {
   counts: { content: number; jobs: number; automations: number; accounts: number; active_automations: number; published_recent: number; failed_recent: number }
   contentByStatus: Record<string, number>
   jobsByStatus: Record<string, number>
-  recentJobs: any[]
-  recentContent: any[]
-  recentPublishes: any[]
-  recentMedia: any[]
-  unreadNotifications: any[]
+  recentJobs: Record<string, unknown>[]
+  recentContent: Record<string, unknown>[]
+  recentPublishes: PublishRow[]
+  recentMedia: Record<string, unknown>[]
+  unreadNotifications: NotificationRow[]
   jobsHistogram: { day: string; total: number }[]
-  providerStatus: Record<string, { name: string; configured: boolean; connected: boolean; account: any }>
+  providerStatus: Record<string, ProviderStatusEntry>
 }
 
 export default function Dashboard() {
@@ -147,7 +162,7 @@ export default function Dashboard() {
             <table className="table">
               <thead><tr><th>Provider</th><th>Status</th><th>Result</th><th>When</th></tr></thead>
               <tbody>
-                {data!.recentPublishes.map((r: any) => (
+                {data!.recentPublishes.map((r) => (
                   <tr key={r.id}>
                     <td><span className="chip">{r.provider}</span></td>
                     <td><StatusPill status={r.status === 'published' ? 'COMPLETED' : 'FAILED'}/></td>
@@ -179,7 +194,7 @@ export default function Dashboard() {
             <div className="p-8"><EmptyState icon={<Bell size={22}/>} title="No unread notifications" description="Job completions and approval requests will appear here."/></div>
           ) : (
             <ul>
-              {data!.unreadNotifications.map((n: any) => (
+              {data!.unreadNotifications.map((n) => (
                 <li key={n.id} className="p-4 border-b border-[color:var(--color-border)] last:border-0">
                   <div className="text-sm font-medium">{n.title}</div>
                   {n.body && <div className="text-xs text-[color:var(--color-muted)] mt-0.5 line-clamp-2">{n.body}</div>}
@@ -194,7 +209,7 @@ export default function Dashboard() {
   )
 }
 
-function Stat({ icon, label, value, to, loading }: { icon: any; label: string; value: number; to: string; loading?: boolean }) {
+function Stat({ icon, label, value, to, loading }: { icon: ReactNode; label: string; value: number; to: string; loading?: boolean }) {
   return (
     <Link to={to} className="card card-pad hover:border-[color:var(--color-border-strong)] transition-colors">
       <div className="flex items-center justify-between text-[color:var(--color-muted)]">

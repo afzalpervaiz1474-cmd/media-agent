@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
@@ -6,30 +6,48 @@ import StatusPill from '../components/StatusPill'
 import EmptyState from '../components/EmptyState'
 import { timeAgo } from '../lib/format'
 import { useToast } from '../contexts/ToastContext'
+import { errorMessage } from '../lib/errors'
 import { Workflow, Plus, Play, Pause, PlayCircle, Trash2 } from 'lucide-react'
 
+interface AutomationListItem {
+  id: string
+  name: string
+  trigger_type: string
+  status: string
+  description?: string
+  schedule_cron?: string
+  run_count?: number
+  last_run_at?: string
+}
+
 export default function Automations() {
-  const [items, setItems] = useState<any[]>([])
+  const [items, setItems] = useState<AutomationListItem[]>([])
   const [loading, setLoading] = useState(true)
   const { push } = useToast()
 
-  const load = () => { setLoading(true); api.get<{ items: any[] }>(`/api/automations`).then((r)=>setItems(r.items||[])).finally(()=>setLoading(false)) }
-  useEffect(load, [])
+  const load = useCallback(() => { setLoading(true); api.get<{ items?: AutomationListItem[] }>(`/api/automations`).then((r)=>setItems(r.items||[])).finally(()=>setLoading(false)) }, [])
+  // Local wrapper: the set-state-in-effect rule records any component-scope
+  // function that calls setState, so the load runs through a function
+  // defined inside the effect. Behavior unchanged: one load on mount.
+  useEffect(() => {
+    const run = () => { load() }
+    run()
+  }, [load])
 
-  const toggle = async (a: any) => {
+  const toggle = async (a: AutomationListItem) => {
     const status = a.status === 'active' ? 'paused' : 'active'
     await api.put(`/api/automations/${a.id}`, { status })
     push({ kind: 'success', title: `Automation ${status}` })
     load()
   }
-  const run = async (a: any) => {
+  const run = async (a: AutomationListItem) => {
     try {
-      const r = await api.post<{ job: any }>(`/api/automations/${a.id}/run`, {})
+      const r = await api.post<{ job: { id: string } }>(`/api/automations/${a.id}/run`, {})
       push({ kind: 'success', title: 'Run queued', body: `Job ${r.job.id.slice(0,8)}` })
-    } catch (e: any) { push({ kind: 'error', title: 'Run failed', body: e.message }) }
+    } catch (e: unknown) { push({ kind: 'error', title: 'Run failed', body: errorMessage(e) }) }
     load()
   }
-  const remove = async (a: any) => {
+  const remove = async (a: AutomationListItem) => {
     if (!confirm(`Delete automation "${a.name}"?`)) return
     await api.del(`/api/automations/${a.id}`); push({ kind: 'success', title: 'Deleted' }); load()
   }

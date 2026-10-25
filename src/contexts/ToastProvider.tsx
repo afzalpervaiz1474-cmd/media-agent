@@ -1,10 +1,6 @@
-import { createContext, useCallback, useContext, useState, type ReactNode } from 'react'
+import { useCallback, useState, type ReactNode } from 'react'
 import { CheckCircle2, XCircle, AlertTriangle, Info, X } from 'lucide-react'
-
-type Toast = { id: string; title: string; body?: string; kind: 'success' | 'error' | 'warn' | 'info' }
-type ToastContextValue = { push: (t: Omit<Toast, 'id'>) => void }
-
-const ToastContext = createContext<ToastContextValue>({ push: () => {} })
+import { ToastContext, type Toast } from './ToastContext'
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -38,5 +34,3 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     </ToastContext.Provider>
   )
 }
-
-export const useToast = () => useContext(ToastContext)

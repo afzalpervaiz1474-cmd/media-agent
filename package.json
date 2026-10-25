@@ -8,7 +8,10 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "worker:video": "node scripts/video-worker.mjs",
+    "smoke:video": "node scripts/smoke-video-analysis.mjs",
+    "smoke:omniroute": "NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co SUPABASE_SERVICE_ROLE_KEY=dummy node scripts/smoke-omniroute.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.99.1",

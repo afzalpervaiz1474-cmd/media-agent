@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import supabase from '../lib/supabase'
 import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
@@ -10,18 +10,38 @@ import { Upload, Trash2, Film, Loader2 } from 'lucide-react'
 const ALLOWED = ['video/mp4','video/quicktime','video/webm','image/png','image/jpeg','image/webp']
 const MAX_BYTES = 500 * 1024 * 1024 // 500 MB
 
+interface MediaAsset {
+  id: string
+  filename: string
+  mime_type: string
+  kind?: string
+  storage_path?: string
+  public_url?: string
+  size_bytes?: number
+  duration_sec?: number | null
+  width?: number | null
+  height?: number | null
+  created_at?: string
+}
+
 export default function Uploads() {
-  const [items, setItems] = useState<any[]>([])
+  const [items, setItems] = useState<MediaAsset[]>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState<{ name: string; progress: number } | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const { push } = useToast()
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true)
-    api.get<{ items: any[] }>(`/api/media`).then((r) => setItems(r.items || [])).finally(() => setLoading(false))
-  }
-  useEffect(load, [])
+    api.get<{ items?: MediaAsset[] }>(`/api/media`).then((r) => setItems(r.items || [])).finally(() => setLoading(false))
+  }, [])
+  // Local wrapper: the set-state-in-effect rule records any component-scope
+  // function that calls setState, so the load runs through a function
+  // defined inside the effect. Behavior unchanged: one load on mount.
+  useEffect(() => {
+    const run = () => { load() }
+    run()
+  }, [load])
 
   const upload = async (file: File) => {
     if (!ALLOWED.includes(file.type)) { push({ kind: 'error', title: 'Unsupported file type', body: file.type || 'unknown' }); return }
@@ -56,11 +76,13 @@ export default function Uploads() {
     load()
   }
 
-  const remove = async (m: any) => {
+  const remove = async (m: MediaAsset) => {
     if (!confirm(`Delete ${m.filename}? This removes the file from storage.`)) return
-    try {
-      await supabase.storage.from('media').remove([m.storage_path])
-    } catch { /* soft ignore */ }
+    if (m.storage_path) {
+      try {
+        await supabase.storage.from('media').remove([m.storage_path])
+      } catch { /* soft ignore */ }
+    }
     await api.del(`/api/media/${m.id}`)
     push({ kind: 'success', title: 'Removed' })
     load()

@@ -1,12 +1,18 @@
 import supabase from './supabase'
 
+type JsonRecord = Record<string, unknown>
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === 'object' && value !== null
+}
+
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession()
   const token = data.session?.access_token
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-export async function apiFetch<T = any>(path: string, init: RequestInit = {}): Promise<T> {
+export async function apiFetch<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(await authHeader()),
@@ -14,11 +20,12 @@ export async function apiFetch<T = any>(path: string, init: RequestInit = {}): P
   }
   const res = await fetch(path, { ...init, headers })
   const text = await res.text()
-  let json: any = null
+  let json: unknown = null
   try { json = text ? JSON.parse(text) : null } catch { json = { raw: text } }
   if (!res.ok) {
-    const msg = json?.error || json?.message || `Request failed (${res.status})`
-    const err = new Error(msg) as Error & { status?: number; body?: any }
+    const body = isRecord(json) ? json : {}
+    const msg = typeof body.error === 'string' ? body.error : typeof body.message === 'string' ? body.message : `Request failed (${res.status})`
+    const err = new Error(msg) as Error & { status?: number; body?: unknown }
     err.status = res.status
     err.body = json
     throw err
@@ -27,11 +34,11 @@ export async function apiFetch<T = any>(path: string, init: RequestInit = {}): P
 }
 
 export const api = {
-  get: <T = any>(path: string) => apiFetch<T>(path, { method: 'GET' }),
-  post: <T = any>(path: string, body?: any) => apiFetch<T>(path, { method: 'POST', body: JSON.stringify(body ?? {}) }),
-  put: <T = any>(path: string, body?: any) => apiFetch<T>(path, { method: 'PUT', body: JSON.stringify(body ?? {}) }),
-  patch: <T = any>(path: string, body?: any) => apiFetch<T>(path, { method: 'PATCH', body: JSON.stringify(body ?? {}) }),
-  del: <T = any>(path: string, body?: any) => apiFetch<T>(path, { method: 'DELETE', body: JSON.stringify(body ?? {}) }),
+  get: <T = unknown>(path: string) => apiFetch<T>(path, { method: 'GET' }),
+  post: <T = unknown>(path: string, body?: unknown) => apiFetch<T>(path, { method: 'POST', body: JSON.stringify(body ?? {}) }),
+  put: <T = unknown>(path: string, body?: unknown) => apiFetch<T>(path, { method: 'PUT', body: JSON.stringify(body ?? {}) }),
+  patch: <T = unknown>(path: string, body?: unknown) => apiFetch<T>(path, { method: 'PATCH', body: JSON.stringify(body ?? {}) }),
+  del: <T = unknown>(path: string, body?: unknown) => apiFetch<T>(path, { method: 'DELETE', body: JSON.stringify(body ?? {}) }),
 }
 
 export const otpApi = {

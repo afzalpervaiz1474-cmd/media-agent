@@ -31,7 +31,7 @@ export function formatDuration(sec?: number | null) {
 }
 
 export function safeFilename(name: string) {
-  return name.normalize('NFKD').replace(/[^\w.\-]+/g, '_').replace(/_+/g, '_').slice(0, 200)
+  return name.normalize('NFKD').replace(/[^\w.-]+/g, '_').replace(/_+/g, '_').slice(0, 200)
 }
 
 export function classNames(...xs: (string | false | null | undefined)[]) {

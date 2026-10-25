@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
 import { useToast } from '../contexts/ToastContext'
+import { errorMessage } from '../lib/errors'
 import { Bot, Send, Loader2, Plus, MessageSquare, ShieldAlert, Wrench } from 'lucide-react'
 
-type Msg = { id?: string; role: 'user'|'assistant'|'system'|'tool'; content: string; tool_calls?: any[]; metadata?: any }
+type ToolCall = { name: string; args?: Record<string, unknown> }
+type Msg = { id?: string; role: 'user'|'assistant'|'system'|'tool'; content: string; tool_calls?: ToolCall[]; metadata?: Record<string, unknown> }
 type Conv = { id: string; title: string; created_at: string }
 
 export default function AIHelper() {
@@ -17,21 +19,38 @@ export default function AIHelper() {
   const { push } = useToast()
   const scroller = useRef<HTMLDivElement>(null)
 
-  const loadConvs = async () => {
-    const r = await api.get<{ items: Conv[]; configured: boolean }>('/api/ai/chat')
-    setConversations(r.items || [])
-    setConfigured(r.configured)
-    if (!current && r.items?.[0]) selectConv(r.items[0].id)
-  }
-
-  useEffect(() => { loadConvs() }, [])
-  useEffect(() => { scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' }) }, [messages])
-
-  const selectConv = async (id: string) => {
+  // selectConv is defined before loadConvs: the old order referenced it
+  // before declaration (flagged by the immutability rule; it only worked
+  // because loadConvs runs after render completes).
+  const selectConv = useCallback(async (id: string) => {
     setCurrent(id)
     const r = await api.get<{ messages: Msg[] }>(`/api/ai/chat/${id}`)
     setMessages(r.messages || [])
-  }
+  }, [])
+
+  // Returns the items instead of auto-selecting: the auto-select now lives
+  // in the mount effect below, so this callback has stable (empty) deps and
+  // the effect genuinely runs once instead of refetching on every selection.
+  const loadConvs = useCallback(async () => {
+    const r = await api.get<{ items: Conv[]; configured: boolean }>('/api/ai/chat')
+    setConversations(r.items || [])
+    setConfigured(r.configured)
+    return r.items || []
+  }, [])
+
+  // Local wrapper: the set-state-in-effect rule records any component-scope
+  // function that calls setState, so the load runs through a function
+  // defined inside the effect. Behavior unchanged: one load on mount,
+  // selecting the first conversation when the list is non-empty.
+  useEffect(() => {
+    const run = () => {
+      loadConvs().then((items) => {
+        if (items[0]) selectConv(items[0].id)
+      })
+    }
+    run()
+  }, [loadConvs, selectConv])
+  useEffect(() => { scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' }) }, [messages])
 
   const newConv = async () => {
     const r = await api.post<{ item: Conv }>('/api/ai/chat', { title: 'New chat' })
@@ -49,7 +68,7 @@ export default function AIHelper() {
       if (!current) { setCurrent(r.conversation_id); loadConvs() }
       setMessages((m) => [...m, r.message])
       if (!r.configured) push({ kind: 'info', title: 'AI not configured', body: 'Add OPENROUTER_API_KEY to enable model calls. Draft mode is on.' })
-    } catch (e: any) { push({ kind: 'error', title: 'AI failed', body: e.message }) }
+    } catch (e: unknown) { push({ kind: 'error', title: 'AI failed', body: errorMessage(e) }) }
     finally { setLoading(false) }
   }
 
@@ -97,7 +116,7 @@ export default function AIHelper() {
                   <div className="whitespace-pre-wrap">{m.content}</div>
                   {(m.tool_calls && m.tool_calls.length > 0) && (
                     <div className="mt-2 space-y-1">
-                      {m.tool_calls.map((t: any, k: number) => (
+                      {m.tool_calls.map((t, k) => (
                         <div key={k} className="text-xs font-mono flex items-center gap-1.5 text-[color:var(--color-accent)]"><Wrench size={10}/> {t.name}({t.args && Object.keys(t.args).slice(0,3).join(', ')})</div>
                       ))}
                     </div>

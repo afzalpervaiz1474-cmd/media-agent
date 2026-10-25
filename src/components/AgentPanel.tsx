@@ -3,22 +3,42 @@ import { api } from '../lib/api'
 import { Bot, Send, Loader2, Sparkles, Wand2, Wrench } from 'lucide-react'
 import { useToast } from '../contexts/ToastContext'
 
-type Msg = { role: 'user' | 'assistant' | 'system'; content: string; tool_calls?: any[] }
+type ToolCall = { name: string }
+
+type Msg = { role: 'user' | 'assistant' | 'system'; content: string; tool_calls?: ToolCall[] }
+
+type ConnectedAccountSummary = {
+  display_name?: string
+  handle?: string
+  provider_account_id?: string
+}
+
+type MediaAssetSummary = {
+  filename: string
+  mime_type: string
+  duration_sec?: number | null
+  width?: number | null
+  height?: number | null
+}
+
+type MetadataSummary = { title?: string }
+
+type PublishResultSummary = { provider_url?: string }
 
 type ContextSummary = {
   provider: string
-  account?: any
-  mediaAsset?: any
-  metadata?: any
+  account?: ConnectedAccountSummary
+  mediaAsset?: MediaAssetSummary
+  metadata?: MetadataSummary
   contentType?: string
   lastError?: string | null
-  publishResult?: any
+  publishResult?: PublishResultSummary
 }
 
 type AgentPanelProps = {
   context: ContextSummary
   suggestions?: { label: string; prompt: string }[]
-  onApplyMetadata?: (patch: any) => void
+  onApplyMetadata?: (patch: Record<string, unknown>) => void
 }
 
 export default function AgentPanel({ context, suggestions = [], onApplyMetadata }: AgentPanelProps) {
@@ -64,7 +84,7 @@ export default function AgentPanel({ context, suggestions = [], onApplyMetadata 
         onApplyMetadata(patch)
         push({ kind: 'success', title: 'Applied AI suggestions' })
       }
-    } catch (e: any) { push({ kind: 'error', title: 'Agent failed', body: e.message }) }
+    } catch (e: unknown) { push({ kind: 'error', title: 'Agent failed', body: e instanceof Error ? e.message : undefined }) }
     finally { setLoading(false) }
   }
 
@@ -102,7 +122,7 @@ export default function AgentPanel({ context, suggestions = [], onApplyMetadata 
             <div className={`max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed ${m.role === 'user' ? 'bg-[color:var(--color-ink)] text-[color:var(--color-bg)]' : 'bg-[color:var(--color-surface-2)]'}`}>
               <div className="whitespace-pre-wrap">{m.content}</div>
               {(m.tool_calls?.length ?? 0) > 0 && (
-                <div className="mt-1.5 space-y-0.5">{m.tool_calls!.map((t: any, k: number) => (<div key={k} className="flex items-center gap-1 text-[10px] font-mono text-[color:var(--color-accent)]"><Wrench size={9}/> {t.name}</div>))}</div>
+                <div className="mt-1.5 space-y-0.5">{m.tool_calls!.map((t, k) => (<div key={k} className="flex items-center gap-1 text-[10px] font-mono text-[color:var(--color-accent)]"><Wrench size={9}/> {t.name}</div>))}</div>
               )}
             </div>
           </div>
@@ -118,9 +138,16 @@ export default function AgentPanel({ context, suggestions = [], onApplyMetadata 
   )
 }
 
-function extractJson(text: string): any | null {
+function extractJson(text: string): Record<string, unknown> | null {
   const fence = text.match(/```json\s*([\s\S]*?)```/i) || text.match(/```\s*({[\s\S]*?})```/i)
   const raw = fence?.[1] || (text.trim().startsWith('{') ? text.trim() : null)
   if (!raw) return null
-  try { return JSON.parse(raw) } catch { return null }
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    // Only object patches are meaningful metadata; arrays/primitives would
+    // spread into garbage keys, so treat them as "no patch".
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null
+  } catch { return null }
 }

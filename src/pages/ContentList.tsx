@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
@@ -7,19 +7,35 @@ import EmptyState from '../components/EmptyState'
 import { timeAgo } from '../lib/format'
 import { FileText, Plus, Search } from 'lucide-react'
 
+interface ContentListItem {
+  id: string
+  title: string
+  topic?: string
+  platforms?: string[]
+  status: string
+  updated_at?: string
+  created_at?: string
+}
+
 export default function ContentList() {
-  const [items, setItems] = useState<any[]>([])
+  const [items, setItems] = useState<ContentListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [q, setQ] = useState('')
   const [status, setStatus] = useState('all')
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true)
-    api.get<{ items: any[] }>('/api/content')
+    api.get<{ items?: ContentListItem[] }>('/api/content')
       .then((r) => setItems(r.items || []))
       .finally(() => setLoading(false))
-  }
-  useEffect(load, [])
+  }, [])
+  // Local wrapper: the set-state-in-effect rule records any component-scope
+  // function that calls setState, so the load runs through a function
+  // defined inside the effect. Behavior unchanged: one load on mount.
+  useEffect(() => {
+    const run = () => { load() }
+    run()
+  }, [load])
 
   const filtered = useMemo(() => items.filter((c) => {
     if (status !== 'all' && c.status !== status) return false

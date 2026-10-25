@@ -39,8 +39,38 @@ The app expects the following env vars (see `.env` and `vercel.json`):
 - `OPENROUTER_API_KEY` — enables real metadata / variants / thumbnail generation and the AI Helper agent.
 - `OPENROUTER_MODEL` (optional) — defaults to `openai/gpt-4o-mini`.
 - `OPENAI_API_KEY` — alternative provider if you plug one in.
+- `OMNIROUTE_API_KEY` — optional self-hosted gateway, see below.
 
 Without these keys the UI still works end-to-end but shows a clearly labelled “draft mode” output.
+
+#### OmniRoute self-hosted gateway (optional)
+
+OmniRoute is a free, MIT-licensed AI gateway you run yourself (repo:
+https://github.com/diegosouzapw/OmniRoute). It exposes an OpenAI-compatible
+`/v1` API, so the app talks to it like any OpenAI-compatible provider, and its
+`auto` model lets the gateway pick a provider/model itself (with automatic
+fallback when a provider's quota is exhausted).
+
+1. Install and run the gateway yourself, on a machine the app server can reach:
+   - `npm install -g omniroute`, then start it (default: http://localhost:20128), or
+   - Docker (see the OmniRoute repo for the image/run command).
+2. Open its dashboard and connect the providers you want to use. The gateway
+   is software, not a key: each provider still needs its own account (or free
+   tier) — there is no single "free unlimited tokens" pool inside the gateway.
+3. Copy the token from your gateway dashboard into the app:
+   - Server env: `OMNIROUTE_API_KEY=<your dashboard token>`,
+     `OMNIROUTE_MODEL=auto`, `OMNIROUTE_BASE_URL=http://localhost:20128/v1`
+     (or the URL where your gateway runs), or
+   - Per-user on `/settings/ai-providers` (provider "OmniRoute").
+4. OpenRouter stays the default provider. OmniRoute is used only when it is
+   configured; if the gateway is unreachable, generation falls back to the
+   app's existing draft/degraded path instead of fabricating output.
+
+Important: the gateway must run as a separate process reachable from the app
+server. It cannot run inside a Vercel serverless function — for a Vercel
+deployment, run the gateway on a small VPS/Render/Railway service and point
+`OMNIROUTE_BASE_URL` at it. Scope is text/structured generation only: STT,
+vision, and image generation are NOT routed through OmniRoute in this version.
 
 ### Social providers (required per-platform before publishing)
 - YouTube: `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REDIRECT_URI`
@@ -109,6 +139,48 @@ The current setup runs jobs inside the request that triggered them (fine for AI-
 2. Enqueue by inserting into `jobs` (already done); a worker process polls or subscribes to the queue.
 3. Worker uses `api/_jobs.js#runJob` as the executor. Because state lives in Postgres, the worker just needs the job id.
 4. FFmpeg / thumbnail extraction adapters go in `api/_media.js` (create it) using `fluent-ffmpeg`.
+
+### Video worker (v1, polling — no Redis required locally)
+
+Video-analysis jobs (`media.analyze_video`, `media.transcribe`,
+`media.extract_frames`, `media.thumbnail_image`) run through the same
+`runJob` executor. The polling worker ships in this repo and works with no
+extra infrastructure:
+
+```bash
+node scripts/video-worker.mjs          # poll forever (WORKER_POLL_MS, WORKER_BATCH)
+node scripts/video-worker.mjs --once   # one pass, then exit
+```
+
+The worker claims each job atomically (QUEUED -> PROCESSING only where the
+row is still QUEUED), so two workers cannot run the same job. For
+multi-worker production setups, replace the polling loop with Redis/BullMQ
+per the steps above — the jobs table stays the queue either way.
+
+## Video analysis (v1)
+
+Upload a video, then `POST /api/ai/analyze-video` with
+`{ media_asset_id, platform?, hints? }`. It enqueues a
+`media.analyze_video` job that runs: FFmpeg audio extraction ->
+Whisper-compatible transcription -> keyframe extraction -> vision frame
+notes -> visual summary -> real thumbnail images (OpenAI-compatible image
+endpoint) -> saved analysis on the asset. `POST /api/ai/analyze-media`
+and the `ai.metadata` automation step then use the stored transcript and
+frame notes, so titles/descriptions are grounded in what the video
+actually says and shows. `GET /api/media/:id` returns the saved analysis
+as `video_analysis`, and `POST /api/media/:id/thumbnail/select` with
+`{ storage_path }` marks the user's chosen thumbnail.
+
+Graceful degradation (same pattern as the rest of the app): a missing
+FFmpeg binary, STT key, vision model, or image key records that step as
+`skipped` with a clear reason — the job still completes with whatever
+real data exists, and nothing is ever fabricated. V1 length limit is 10
+minutes (`MAX_VIDEO_MINUTES`). Analysis storage needs no migration: it
+lives in `media_assets.metadata.video_analysis` unless you apply the
+optional `supabase/migrations/20261025_video_analysis.sql`, which adds
+dedicated columns the code auto-detects. Transcoding (`media.transcode`)
+is still not implemented in v1. AI output still goes through the
+existing approval flow before any publish job runs.
 
 ## Security
 

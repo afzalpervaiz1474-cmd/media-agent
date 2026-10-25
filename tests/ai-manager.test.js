@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { SUPPORTED_PROVIDERS, envDefaults, isConfigured, fetchOpenRouterModels } from '../lib/server/_ai_registry.js';
 import { encryptSecret, decryptSecret, keyHint } from '../lib/server/_crypto.js';
 
@@ -77,6 +77,17 @@ describe('envDefaults', () => {
 });
 
 describe('fetchOpenRouterModels', () => {
+  // Hermetic: these tests used to call the real OpenRouter API, which hangs
+  // in sandboxed environments and always blew past vitest's 5s timeout
+  // (the implementation aborts only after 15s). Every test below now runs
+  // against a mocked fetch; no test in this block touches the network.
+  const realFetch = globalThis.fetch;
+  beforeEach(() => {
+    // Default mock: provider refuses the key (401) — the invalid-key case.
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401 });
+  });
+  afterEach(() => { globalThis.fetch = realFetch; });
+
   it('returns null when no apiKey provided', async () => {
     const result = await fetchOpenRouterModels('');
     expect(result).toBeNull();
@@ -89,7 +100,22 @@ describe('fetchOpenRouterModels', () => {
 
   it('never exposes the API key in the returned data', async () => {
     const key = 'sk-test-key-12345';
+    let seenUrl;
+    let seenOpts;
+    globalThis.fetch = vi.fn().mockImplementation(async (url, opts) => {
+      seenUrl = url;
+      seenOpts = opts;
+      return {
+        ok: true,
+        json: async () => ({ data: [
+          { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', description: 'test model', context_length: 128000, pricing: { prompt: '0.00000015', completion: '0.0000006' }, enabled: true, tags: ['test'] },
+          { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'test model 2', context_length: 200000, pricing: {}, enabled: true, tags: [] },
+        ] }),
+      };
+    });
     const result = await fetchOpenRouterModels(key);
+    expect(seenUrl).toBe('https://openrouter.ai/api/v1/models');
+    expect(seenOpts.headers.Authorization).toBe(`Bearer ${key}`);
     if (Array.isArray(result)) {
       for (const m of result) {
         expect(m.id).toBeTruthy();

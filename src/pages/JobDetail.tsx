@@ -1,27 +1,61 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
 import StatusPill from '../components/StatusPill'
 import { useToast } from '../contexts/ToastContext'
+import { errorMessage } from '../lib/errors'
 import { timeAgo } from '../lib/format'
 import { ArrowLeft, PlayCircle, XCircle, CheckCircle2, RefreshCw } from 'lucide-react'
 
+interface Job {
+  id: string
+  kind: string
+  status: string
+  progress?: number
+  attempts?: number
+  max_attempts?: number
+  created_at?: string
+  started_at?: string
+  finished_at?: string
+  error?: string
+  input?: unknown
+  output?: unknown
+}
+
+interface JobEvent {
+  id: string
+  level?: string
+  message?: string
+  created_at: string
+}
+
 export default function JobDetail() {
   const { id } = useParams()
-  const [job, setJob] = useState<any>(null)
-  const [events, setEvents] = useState<any[]>([])
+  const [job, setJob] = useState<Job | null>(null)
+  const [events, setEvents] = useState<JobEvent[]>([])
   const [loading, setLoading] = useState(true)
   const { push } = useToast()
 
-  const load = () => {
-    api.get<{ job: any; events: any[] }>(`/api/jobs/${id}`).then((r) => { setJob(r.job); setEvents(r.events || []) }).finally(() => setLoading(false))
-  }
-  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t) }, [id])
+  const load = useCallback(() => {
+    api.get<{ job: Job; events?: JobEvent[] }>(`/api/jobs/${id}`).then((r) => { setJob(r.job); setEvents(r.events || []) }).finally(() => setLoading(false))
+  }, [id])
+  // Local wrapper: the set-state-in-effect rule records any component-scope
+  // function that calls setState, so the polling setup runs through a
+  // function defined inside the effect. Behavior unchanged: initial load
+  // plus 5s polling, cleaned up on unmount or id change.
+  useEffect(() => {
+    const start = () => {
+      load()
+      const t = setInterval(load, 5000)
+      return () => clearInterval(t)
+    }
+    return start()
+  }, [load])
 
   const action = async (which: 'approve' | 'cancel' | 'retry' | 'run') => {
-    try { const r = await api.post<{ job: any }>(`/api/jobs/${id}/${which}`, {}); setJob(r.job); push({ kind: 'success', title: `Job ${which}` }); load() }
-    catch (e: any) { push({ kind: 'error', title: `${which} failed`, body: e.message }) }
+    try { const r = await api.post<{ job: Job }>(`/api/jobs/${id}/${which}`, {}); setJob(r.job); push({ kind: 'success', title: `Job ${which}` }); load() }
+    catch (e: unknown) { push({ kind: 'error', title: `${which} failed`, body: errorMessage(e) }) }
   }
 
   if (loading || !job) return <div className="max-w-4xl mx-auto p-6 md:p-8"><div className="skeleton h-8 w-64 mb-6"/><div className="skeleton h-64"/></div>

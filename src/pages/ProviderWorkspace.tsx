@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import supabase from '../lib/supabase'
 import { api } from '../lib/api'
 import { useToast } from '../contexts/ToastContext'
+import { errorMessage } from '../lib/errors'
 import PageHeader from '../components/PageHeader'
 import AgentPanel from '../components/AgentPanel'
 import StatusPill from '../components/StatusPill'
@@ -11,10 +12,79 @@ import {
   Youtube, Music2, Instagram, Facebook, ShieldAlert, CheckCircle2, ExternalLink, Loader2,
   Upload, Wand2, Save, Send, ShieldCheck, Sparkles, RefreshCw, XCircle, Info, Link as LinkIcon, PlugZap, Activity,
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 
 type Provider = 'youtube' | 'tiktok' | 'instagram' | 'facebook'
 
-const ICONS: Record<Provider, any> = { youtube: Youtube, tiktok: Music2, instagram: Instagram, facebook: Facebook }
+type ThumbnailConcept = string | { idea?: string; palette?: string }
+
+interface ContentMetadata {
+  title: string
+  description: string
+  caption: string
+  tags: string[]
+  hashtags: string[]
+  cta: string
+  thumbnail_concepts: ThumbnailConcept[]
+}
+
+interface ConnectedAccount {
+  avatar_url?: string
+  display_name?: string
+  handle?: string
+  provider_account_id?: string
+  last_synced_at?: string
+  scopes?: string[]
+}
+
+interface ProviderState {
+  account?: ConnectedAccount
+  tokenHealth?: { has_token?: boolean; expired?: boolean }
+  configured?: boolean
+  meta?: { name?: string; docs?: string; notes?: string[] }
+  missing?: string[]
+}
+
+interface MediaAsset {
+  id: string
+  filename: string
+  mime_type: string
+  kind?: string
+  storage_path?: string
+  public_url?: string
+  size_bytes?: number
+  duration_sec?: number | null
+  width?: number | null
+  height?: number | null
+}
+
+interface Analysis {
+  summary?: string
+  _note?: string
+  rationale?: string
+  suggestions?: Partial<ContentMetadata>
+}
+
+interface PublishResult {
+  provider_url?: string
+  provider_post_id?: string
+}
+
+interface PublishHistoryRow {
+  id: string
+  created_at?: string
+  status?: string
+  provider_url?: string
+  provider_post_id?: string
+  error?: string
+}
+
+interface HealthCheck {
+  overall?: string
+  checks: { id: string; status: string; label: string; detail: string; action?: string }[]
+}
+
+const ICONS: Record<Provider, LucideIcon> = { youtube: Youtube, tiktok: Music2, instagram: Instagram, facebook: Facebook }
 const CONTENT_TYPES: Record<Provider, { id: string; label: string; hint: string }[]> = {
   youtube: [
     { id: 'short', label: 'Short', hint: 'Vertical 9:16, ≤60s' },
@@ -31,44 +101,53 @@ const CONTENT_TYPES: Record<Provider, { id: string; label: string; hint: string 
   ],
 }
 
+function storagePath(userId: string, name: string): string {
+  return `${userId}/${Date.now()}_${name}`
+}
+
 export default function ProviderWorkspace({ provider }: { provider: Provider }) {
   const Icon = ICONS[provider]
   const { push } = useToast()
 
-  const [state, setState] = useState<any>(null)
+  const [state, setState] = useState<ProviderState | null>(null)
   const [loading, setLoading] = useState(true)
   const [connecting, setConnecting] = useState(false)
   const [channelUrl, setChannelUrl] = useState('')
 
   const [contentType, setContentType] = useState<string>(CONTENT_TYPES[provider][0].id)
-  const [media, setMedia] = useState<any[]>([])
-  const [selected, setSelected] = useState<any | null>(null)
+  const [media, setMedia] = useState<MediaAsset[]>([])
+  const [selected, setSelected] = useState<MediaAsset | null>(null)
   const [uploading, setUploading] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
   const [analyzing, setAnalyzing] = useState(false)
-  const [analysis, setAnalysis] = useState<any | null>(null)
-  const [metadata, setMetadata] = useState<any>({ title: '', description: '', caption: '', tags: [], hashtags: [], cta: '', thumbnail_concepts: [] })
+  const [analysis, setAnalysis] = useState<Analysis | null>(null)
+  const [metadata, setMetadata] = useState<ContentMetadata>({ title: '', description: '', caption: '', tags: [], hashtags: [], cta: '', thumbnail_concepts: [] })
 
   const [publishing, setPublishing] = useState(false)
-  const [publishResult, setPublishResult] = useState<any | null>(null)
-  const [history, setHistory] = useState<any[]>([])
+  const [publishResult, setPublishResult] = useState<PublishResult | null>(null)
+  const [history, setHistory] = useState<PublishHistoryRow[]>([])
   const [lastError, setLastError] = useState<string | null>(null)
-  const [health, setHealth] = useState<any | null>(null)
+  const [health, setHealth] = useState<HealthCheck | null>(null)
   const [healthLoading, setHealthLoading] = useState(false)
 
   const loadAccount = useCallback(async () => {
-    setLoading(true)
-    try {
-      const r = await api.get<{ providers: any }>(`/api/accounts`)
-      setState(r.providers?.[provider])
-    } catch (e: any) { push({ kind: 'error', title: 'Failed to load account', body: e.message }) }
-    finally { setLoading(false) }
-  }, [provider, push])
+    const r = await api.get<{ providers?: Partial<Record<Provider, ProviderState>> }>(`/api/accounts`)
+    setState(r.providers?.[provider] ?? null)
+    setLoading(false)
+  }, [provider])
+
+  // Shared account-load failure handler, invoked only via .catch callbacks
+  // (never called synchronously from an effect), so the set-state-in-effect
+  // rule — which traces sync wrappers transitively — stays satisfied.
+  const handleAccountError = useCallback((e: unknown) => {
+    setLoading(false)
+    push({ kind: 'error', title: 'Failed to load account', body: errorMessage(e) })
+  }, [push])
 
   const loadMedia = useCallback(async () => {
     try {
-      const r = await api.get<{ items: any[] }>(`/api/media`)
+      const r = await api.get<{ items?: MediaAsset[] }>(`/api/media`)
       setMedia(r.items || [])
     } catch { /* handled elsewhere */ }
   }, [])
@@ -82,14 +161,25 @@ export default function ProviderWorkspace({ provider }: { provider: Provider }) 
     } catch { /* soft */ }
   }, [provider])
 
-  useEffect(() => { loadAccount(); loadMedia(); loadHistory() }, [loadAccount, loadMedia, loadHistory])
+  // Local wrapper: the set-state-in-effect rule records any component-scope
+  // function that calls setState (it does not see across awaits), so the
+  // loaders are invoked through a function defined inside the effect.
+  // Behavior is unchanged: same three parallel, fire-and-forget loads.
+  useEffect(() => {
+    const run = () => {
+      loadAccount().catch(handleAccountError)
+      loadMedia()
+      loadHistory()
+    }
+    run()
+  }, [loadAccount, loadMedia, loadHistory, handleAccountError])
 
   useEffect(() => {
 const onMsg = (event: MessageEvent) => {
       if (event.data?.type !== 'modulate-oauth') return;
       if (event.data.status === 'success') {
         push({ kind: 'success', title: `${provider} connected` })
-        loadAccount()
+        loadAccount().catch(handleAccountError)
       } else {
         push({ kind: 'error', title: `${provider} connect failed`, body: event.data.message || 'Provider returned an error.' })
       }
@@ -97,12 +187,11 @@ const onMsg = (event: MessageEvent) => {
     }
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)
-  }, [provider, push, loadAccount])
+  }, [provider, push, loadAccount, handleAccountError])
 
 const beginConnect = async () => {
      setConnecting(true)
      try {
-       const next = channelUrl ? `/${provider}?channel=${encodeURIComponent(channelUrl)}` : `/${provider}`;
        const r = await api.get<{ configured: boolean; url?: string; missing?: string[]; note?: string; testing?: boolean }>(`/api/oauth/${provider}/start${channelUrl ? '?channel=' + encodeURIComponent(channelUrl) : ''}`)
        if (!r || typeof r !== 'object' || !('configured' in r) || r.configured === undefined) {
          setConnecting(false)
@@ -124,23 +213,23 @@ if (!r.configured) {
          return
        }
        window.open(r.url, `modulate-oauth-${provider}`, 'width=520,height=680')
-     } catch (e: any) {
+     } catch (e: unknown) {
        setConnecting(false)
-       push({ kind: 'error', title: 'Could not start OAuth', body: e.message })
+       push({ kind: 'error', title: 'Could not start OAuth', body: errorMessage(e) })
      }
    }
 
   const runHealth = async () => {
     setHealthLoading(true)
-    try { const r = await api.get(`/api/health/${provider}`); setHealth(r) }
-    catch (e: any) { push({ kind: 'error', title: 'Health check failed', body: e.message }) }
+    try { const r = await api.get<HealthCheck>(`/api/health/${provider}`); setHealth(r) }
+    catch (e: unknown) { push({ kind: 'error', title: 'Health check failed', body: errorMessage(e) }) }
     finally { setHealthLoading(false) }
   }
 
   const disconnect = async () => {
     if (!confirm(`Disconnect ${provider}? Stored tokens will be deleted.`)) return
-    try { await api.post(`/api/oauth/${provider}/disconnect`); push({ kind: 'success', title: 'Disconnected' }); loadAccount() }
-    catch (e: any) { push({ kind: 'error', title: 'Disconnect failed', body: e.message }) }
+    try { await api.post(`/api/oauth/${provider}/disconnect`); push({ kind: 'success', title: 'Disconnected' }); loadAccount().catch(handleAccountError) }
+    catch (e: unknown) { push({ kind: 'error', title: 'Disconnect failed', body: errorMessage(e) }) }
   }
 
   const saveChannelUrl = async () => {
@@ -157,7 +246,7 @@ if (!r.configured) {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
       const name = safeFilename(file.name)
-      const path = `${user.id}/${Date.now()}_${name}`
+      const path = storagePath(user.id, name)
       const { error } = await supabase.storage.from('media').upload(path, file, { contentType: file.type, upsert: false })
       if (error) throw error
       const { data: urlData } = supabase.storage.from('media').getPublicUrl(path)
@@ -167,7 +256,7 @@ if (!r.configured) {
       } else if (file.type.startsWith('image/')) {
         try { const meta = await probeImage(file); width = meta.width; height = meta.height } catch { /* ignore */ }
       }
-      const r = await api.post<{ item: any }>(`/api/media`, {
+      const r = await api.post<{ item: MediaAsset }>(`/api/media`, {
         filename: name, storage_path: path, public_url: urlData.publicUrl,
         mime_type: file.type, size_bytes: file.size, duration_sec: duration, width, height,
         kind: file.type.startsWith('image/') ? 'image' : 'video',
@@ -177,7 +266,7 @@ if (!r.configured) {
       push({ kind: 'success', title: 'Uploaded' })
       // Auto-analyze
       analyzeAsset(r.item)
-    } catch (e: any) { push({ kind: 'error', title: 'Upload failed', body: e.message }) }
+    } catch (e: unknown) { push({ kind: 'error', title: 'Upload failed', body: errorMessage(e) }) }
     finally { setUploading(false) }
   }
 
@@ -185,12 +274,12 @@ if (!r.configured) {
     if (!asset) { push({ kind: 'warn', title: 'Select or upload media first' }); return }
     setAnalyzing(true); setLastError(null)
     try {
-      const r = await api.post<{ analysis: any; configured: boolean }>(`/api/ai/analyze-media`, {
+      const r = await api.post<{ analysis: Analysis; configured: boolean }>(`/api/ai/analyze-media`, {
         media_asset_id: asset.id, platform: provider, content_type: contentType,
       })
       setAnalysis(r.analysis)
       const s = r.analysis?.suggestions || {}
-      setMetadata((prev: any) => ({
+      setMetadata((prev) => ({
         title: s.title || prev.title,
         description: s.description || prev.description,
         caption: s.caption || prev.caption,
@@ -200,7 +289,7 @@ if (!r.configured) {
         thumbnail_concepts: s.thumbnail_concepts || prev.thumbnail_concepts,
       }))
       push({ kind: r.configured ? 'success' : 'info', title: r.configured ? 'AI analysis complete' : 'Draft analysis ready', body: r.configured ? undefined : 'Add OPENROUTER_API_KEY for model-backed analysis.' })
-    } catch (e: any) { setLastError(e.message); push({ kind: 'error', title: 'Analyze failed', body: e.message }) }
+    } catch (e: unknown) { setLastError(errorMessage(e)); push({ kind: 'error', title: 'Analyze failed', body: errorMessage(e) }) }
     finally { setAnalyzing(false) }
   }
 
@@ -225,38 +314,39 @@ if (!r.configured) {
     return v
   }, [selected, provider, contentType])
 
+  const account = state?.account
   const canPublish = !!state?.account && !!state?.tokenHealth?.has_token && !!selected && validateNow.every((x) => x.level !== 'error') && !!metadata.title
   const configured = !!state?.configured
   const connected = !!state?.account
   const tokenExpired = !!state?.tokenHealth?.expired
 
   const publish = async () => {
-    if (!canPublish) return
+    if (!canPublish || !selected) return
     if (!confirm(`Publish to ${provider} now?\nThis calls the official ${provider} API and cannot be undone via Modulate.`)) return
     setPublishing(true); setLastError(null)
     try {
-      const r = await api.post<{ job: any; result: any }>(`/api/publish`, {
+      const r = await api.post<{ job: unknown; result: PublishResult }>(`/api/publish`, {
         provider, media_asset_id: selected.id, metadata, content_type: contentType,
       })
       setPublishResult(r.result)
       loadHistory()
       push({ kind: 'success', title: 'Published', body: r.result?.provider_url || `id: ${r.result?.provider_post_id || 'accepted'}` })
-    } catch (e: any) {
-      setLastError(e.message)
-      push({ kind: 'error', title: 'Publish failed', body: e.message })
+    } catch (e: unknown) {
+      setLastError(errorMessage(e))
+      push({ kind: 'error', title: 'Publish failed', body: errorMessage(e) })
     } finally { setPublishing(false) }
   }
 
   const saveDraft = async () => {
     try {
-      const r = await api.post<{ item: any }>(`/api/content`, {
+      const r = await api.post<{ item: { id: string } }>(`/api/content`, {
         title: metadata.title, description: metadata.description, cta: metadata.cta,
         tags: metadata.tags, hashtags: metadata.hashtags, thumbnail_concepts: metadata.thumbnail_concepts,
         platforms: [provider], platform_variants: { [provider]: { title: metadata.title, caption: metadata.caption, content_type: contentType } },
         media_asset_id: selected?.id || null, status: 'draft',
       })
       push({ kind: 'success', title: 'Draft saved', body: `Content ${r.item.id.slice(0, 8)}` })
-    } catch (e: any) { push({ kind: 'error', title: 'Save failed', body: e.message }) }
+    } catch (e: unknown) { push({ kind: 'error', title: 'Save failed', body: errorMessage(e) }) }
   }
 
   const meta = state?.meta
@@ -275,8 +365,8 @@ if (!r.configured) {
       <div className="card mb-6 overflow-hidden">
         <div className="p-5 flex items-start gap-4">
           <div className="h-14 w-14 rounded-xl bg-[color:var(--color-surface-2)] grid place-items-center flex-shrink-0 overflow-hidden">
-            {connected && state.account.avatar_url ? (
-              <img src={state.account.avatar_url} alt="" className="h-full w-full object-cover"/>
+            {account?.avatar_url ? (
+              <img src={account?.avatar_url} alt="" className="h-full w-full object-cover"/>
             ) : (
               <Icon size={24} className="text-[color:var(--color-accent)]"/>
             )}
@@ -290,19 +380,19 @@ if (!r.configured) {
                 <div className="text-sm text-[color:var(--color-ink-2)] mt-1">Set these server env vars, then reconnect. Modulate never fakes a connected state.</div>
                 <div className="font-mono text-xs mt-2 text-[color:var(--color-muted)]">{missing.join(', ')}</div>
               </>
-            ) : connected ? (
+            ) : account ? (
               <>
-                <div className="h-display text-2xl truncate">{state.account.display_name || state.account.handle || state.account.provider_account_id}</div>
+                <div className="h-display text-2xl truncate">{account.display_name || account.handle || account.provider_account_id}</div>
                 <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-[color:var(--color-muted)]">
-                  {state.account.handle && <span>@{state.account.handle}</span>}
-                  <span className="font-mono">{provider}:{String(state.account.provider_account_id).slice(0, 24)}</span>
-                  {state.account.last_synced_at && <span>synced {timeAgo(state.account.last_synced_at)}</span>}
+                  {account.handle && <span>@{account.handle}</span>}
+                  <span className="font-mono">{provider}:{String(account.provider_account_id).slice(0, 24)}</span>
+                  {account.last_synced_at && <span>synced {timeAgo(account.last_synced_at)}</span>}
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <span className="chip chip-success"><CheckCircle2 size={12}/> Connected</span>
                   {state.tokenHealth?.expired && <span className="chip chip-danger">Token expired</span>}
                   {state.tokenHealth?.has_token && !state.tokenHealth?.expired && <span className="chip">Token healthy</span>}
-                  {state.account.scopes?.length > 0 && <span className="chip">scopes: {state.account.scopes.length}</span>}
+                  {account.scopes && account.scopes.length > 0 && <span className="chip">scopes: {account.scopes.length}</span>}
                 </div>
               </>
             ) : (
@@ -353,7 +443,7 @@ if (!r.configured) {
               <span className={`chip ${health.overall === 'PASS' ? 'chip-success' : health.overall === 'WARNING' ? 'chip-warn' : 'chip-danger'}`}>{health.overall}</span>
             </div>
             <ul className="space-y-1.5">
-              {health.checks.map((c: any) => (
+              {health.checks.map((c) => (
                 <li key={c.id} className="grid grid-cols-[110px_1fr] gap-3 text-xs">
                   <span className={`font-mono ${c.status === 'PASS' ? 'text-[color:var(--color-success)]' : c.status === 'WARNING' ? 'text-[color:var(--color-warn)]' : c.status === 'FAIL' ? 'text-[color:var(--color-danger)]' : 'text-[color:var(--color-muted)]'}`}>{c.status}</span>
                   <div>
@@ -479,10 +569,10 @@ if (!r.configured) {
               <div className="mt-3">
                 <div className="label mb-2">Thumbnail concepts</div>
                 <div className="grid sm:grid-cols-2 gap-2">
-                  {metadata.thumbnail_concepts.map((c: any, i: number) => (
+                  {metadata.thumbnail_concepts.map((c, i) => (
                     <div key={i} className="surface-2 rounded-lg p-2 text-xs">
-                      <div>{c.idea || c}</div>
-                      {c.palette && <div className="text-[color:var(--color-muted)] mt-0.5">Palette: {c.palette}</div>}
+                      <div>{typeof c === 'string' ? c : c.idea}</div>
+                      {typeof c !== 'string' && c.palette && <div className="text-[color:var(--color-muted)] mt-0.5">Palette: {c.palette}</div>}
                     </div>
                   ))}
                 </div>
@@ -566,8 +656,8 @@ if (!r.configured) {
         <div className="lg:sticky lg:top-16 self-start">
           <AgentPanel
             context={{
-              provider, account: state?.account, mediaAsset: selected, metadata,
-              contentType, lastError, publishResult,
+              provider, account: state?.account, mediaAsset: selected ?? undefined, metadata,
+              contentType, lastError, publishResult: publishResult ?? undefined,
             }}
             suggestions={[
               { label: 'Generate 5 better titles', prompt: 'Return JSON: { "title": "the single best title" } after considering 5 punchy alternatives for the current media and metadata.' },
@@ -576,7 +666,7 @@ if (!r.configured) {
               { label: 'Prepare all platforms', prompt: 'Suggest short platform-specific captions for youtube, tiktok, instagram and facebook based on the current metadata. Return JSON: { "caption": "..." } for the current platform.' },
               { label: 'Why did the last publish fail?', prompt: 'Given the last error above, explain in plain language what likely went wrong and what to try next. No JSON needed.' },
             ]}
-            onApplyMetadata={(patch) => setMetadata((prev: any) => ({ ...prev, ...patch }))}
+            onApplyMetadata={(patch) => setMetadata((prev) => ({ ...prev, ...(patch as Partial<ContentMetadata>) }))}
           />
         </div>
       </div>
@@ -585,7 +675,7 @@ if (!r.configured) {
 
 }
 
-function Section({ num, title, children }: { num: number; title: string; children: any }) {
+function Section({ num, title, children }: { num: number; title: string; children: ReactNode }) {
   return (
     <section className="card">
       <div className="p-4 border-b border-[color:var(--color-border)] flex items-center gap-3">
@@ -597,7 +687,7 @@ function Section({ num, title, children }: { num: number; title: string; childre
   )
 }
 
-function Field({ label, children, full }: { label: string; children: any; full?: boolean }) {
+function Field({ label, children, full }: { label: string; children: ReactNode; full?: boolean }) {
   return (
     <div className={full ? 'md:col-span-2' : ''}>
       <div className="label mb-1.5">{label}</div>

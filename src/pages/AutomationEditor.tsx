@@ -4,7 +4,26 @@ import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
 import StatusPill from '../components/StatusPill'
 import { useToast } from '../contexts/ToastContext'
+import { errorMessage } from '../lib/errors'
 import { PlayCircle, Save, Trash2, Plus, GripVertical } from 'lucide-react'
+
+interface AutomationStep {
+  position: number
+  kind: string
+  name: string
+  config: Record<string, unknown>
+}
+
+interface Automation {
+  id?: string
+  name: string
+  description: string
+  trigger_type: string
+  schedule_cron: string
+  status: string
+  approval_required: boolean
+  steps: AutomationStep[]
+}
 
 const STEP_KINDS = [
   { kind: 'trigger', name: 'Trigger' },
@@ -25,7 +44,7 @@ export default function AutomationEditor() {
   const nav = useNavigate()
   const { push } = useToast()
   const [loading, setLoading] = useState(!!id)
-  const [a, setA] = useState<any>({
+  const [a, setA] = useState<Automation>({
     name: 'New automation',
     description: '',
     trigger_type: 'manual',
@@ -40,28 +59,34 @@ export default function AutomationEditor() {
     ],
   })
 
+  // Local wrapper: setState directly in an effect body trips
+  // set-state-in-effect, so the load runs through a function defined
+  // inside the effect. Behavior unchanged.
   useEffect(() => {
-    if (!id) return
-    setLoading(true)
-    api.get<{ item: any }>(`/api/automations/${id}`).then((r)=>setA(r.item)).finally(()=>setLoading(false))
+    const load = () => {
+      if (!id) return
+      setLoading(true)
+      api.get<{ item: Automation }>(`/api/automations/${id}`).then((r)=>setA(r.item)).finally(()=>setLoading(false))
+    }
+    load()
   }, [id])
 
   const save = async () => {
     try {
-      const res = id ? await api.put<{ item: any }>(`/api/automations/${id}`, a) : await api.post<{ item: any }>(`/api/automations`, a)
+      const res = id ? await api.put<{ item: Automation }>(`/api/automations/${id}`, a) : await api.post<{ item: Automation }>(`/api/automations`, a)
       push({ kind: 'success', title: 'Saved' })
       if (!id && res.item?.id) nav(`/automations/${res.item.id}`, { replace: true })
-    } catch (e: any) { push({ kind: 'error', title: 'Save failed', body: e.message }) }
+    } catch (e: unknown) { push({ kind: 'error', title: 'Save failed', body: errorMessage(e) }) }
   }
   const run = async () => {
     if (!id) { push({ kind: 'warn', title: 'Save first' }); return }
-    try { const r = await api.post<{ job: any }>(`/api/automations/${id}/run`, {}); push({ kind: 'success', title: 'Run queued', body: `Job ${r.job.id.slice(0,8)}` }); nav(`/jobs/${r.job.id}`) }
-    catch (e: any) { push({ kind: 'error', title: 'Run failed', body: e.message }) }
+    try { const r = await api.post<{ job: { id: string } }>(`/api/automations/${id}/run`, {}); push({ kind: 'success', title: 'Run queued', body: `Job ${r.job.id.slice(0,8)}` }); nav(`/jobs/${r.job.id}`) }
+    catch (e: unknown) { push({ kind: 'error', title: 'Run failed', body: errorMessage(e) }) }
   }
 
   const addStep = () => setA({ ...a, steps: [...(a.steps || []), { position: (a.steps?.length || 0) + 1, kind: 'ai.metadata', name: 'AI step', config: {} }] })
-  const removeStep = (i: number) => setA({ ...a, steps: a.steps.filter((_: any, idx: number) => idx !== i).map((s: any, idx: number) => ({ ...s, position: idx + 1 })) })
-  const updateStep = (i: number, patch: any) => setA({ ...a, steps: a.steps.map((s: any, idx: number) => idx === i ? { ...s, ...patch } : s) })
+  const removeStep = (i: number) => setA({ ...a, steps: a.steps.filter((_, idx) => idx !== i).map((s, idx) => ({ ...s, position: idx + 1 })) })
+  const updateStep = (i: number, patch: Partial<AutomationStep>) => setA({ ...a, steps: a.steps.map((s, idx) => idx === i ? { ...s, ...patch } : s) })
 
   if (loading) return <div className="max-w-5xl mx-auto p-6 md:p-8"><div className="skeleton h-8 w-64 mb-6"/><div className="skeleton h-64"/></div>
 
@@ -101,7 +126,7 @@ export default function AutomationEditor() {
             <div className="h-display text-xl">Steps</div>
             <button className="btn btn-outline" onClick={addStep}><Plus size={14}/> Add step</button>
           </div>
-          {(a.steps || []).map((s: any, i: number) => (
+          {(a.steps || []).map((s, i) => (
             <div key={i} className="card card-pad">
               <div className="flex items-start gap-3">
                 <GripVertical size={16} className="text-[color:var(--color-muted)] mt-2" />

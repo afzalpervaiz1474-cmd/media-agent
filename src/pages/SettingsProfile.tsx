@@ -1,21 +1,33 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import { useToast } from '../contexts/ToastContext'
+import { errorMessage } from '../lib/errors'
 import PageHeader from '../components/PageHeader'
 import { useTheme } from '../contexts/ThemeContext'
 import { Save } from 'lucide-react'
 
+interface Profile {
+  full_name?: string
+  email?: string
+  timezone?: string
+}
+
 export default function SettingsProfile() {
-  const [me, setMe] = useState<any>({ full_name: '', timezone: 'UTC' })
+  const [me, setMe] = useState<Profile>({ full_name: '', timezone: 'UTC' })
   const [loading, setLoading] = useState(true)
   const { push } = useToast()
   const { theme, setTheme } = useTheme()
 
-  useEffect(() => { api.get<{ profile: any }>('/api/me').then((r)=>setMe(r.profile || me)).finally(()=>setLoading(false)) }, [])
+  // The old fallback `r.profile || me` referenced `me` from the mount
+  // closure (where it is just the initial defaults) and tripped the
+  // missing-dependency warning; adding `me` to deps would refetch in a
+  // loop. Skipping the set when there is no profile is exactly
+  // equivalent on this mount-only effect.
+  useEffect(() => { api.get<{ profile?: Profile }>('/api/me').then((r)=>{ if (r.profile) setMe(r.profile) }).finally(()=>setLoading(false)) }, [])
 
   const save = async () => {
     try { await api.put('/api/me', me); push({ kind: 'success', title: 'Profile saved' }) }
-    catch (e: any) { push({ kind: 'error', title: 'Save failed', body: e.message }) }
+    catch (e: unknown) { push({ kind: 'error', title: 'Save failed', body: errorMessage(e) }) }
   }
 
   return (

@@ -12,6 +12,7 @@ import { handler as media } from '../lib/server/media.js';
 import { handler as notifications } from '../lib/server/notifications.js';
 import { handler as publish } from '../lib/server/publish.js';
 import { handler as aiAnalyzeMedia } from '../lib/server/ai/analyze-media.js';
+import { handler as aiAnalyzeVideo } from '../lib/server/ai/analyze-video.js';
 import { handler as aiChat } from '../lib/server/ai/chat.js';
 import { handler as aiGenerate } from '../lib/server/ai/generate.js';
 import { handler as aiModels } from '../lib/server/ai/models.js';
@@ -31,6 +32,7 @@ import { handler as jobsIdRetry } from '../lib/server/jobs/[id]/retry.js';
 import { handler as jobsIdRun } from '../lib/server/jobs/[id]/run.js';
 import { handler as mediaProxy } from '../lib/server/media/proxy.js';
 import { handler as mediaId } from '../lib/server/media/[id].js';
+import { handler as mediaThumbnailSelect } from '../lib/server/media/thumbnail-select.js';
 import { handler as oauthCallback } from '../lib/server/oauth/[provider]/callback.js';
 import { handler as oauthDisconnect } from '../lib/server/oauth/[provider]/disconnect.js';
 import { handler as oauthStart } from '../lib/server/oauth/[provider]/start.js';
@@ -106,6 +108,10 @@ function findHandler(urlPath) {
   if (parts[0] === 'media' && parts[1] === 'proxy') {
     return mediaProxy;
   }
+  // media/[id]/thumbnail/select (must precede the generic media/[id] route)
+  if (parts[0] === 'media' && parts.length >= 4 && parts[2] === 'thumbnail' && parts[3] === 'select') {
+    return mediaThumbnailSelect;
+  }
   // media/[id]
   if (parts[0] === 'media' && parts.length >= 2 && parts[1] !== 'proxy') {
     return mediaId;
@@ -119,6 +125,7 @@ function findHandler(urlPath) {
   // ai/*
   if (parts[0] === 'ai') {
     if (parts[1] === 'analyze-media') return aiAnalyzeMedia;
+    if (parts[1] === 'analyze-video') return aiAnalyzeVideo;
     if (parts[1] === 'chat') return aiChat;
     if (parts[1] === 'generate') return aiGenerate;
     if (parts[1] === 'models') return aiModels;

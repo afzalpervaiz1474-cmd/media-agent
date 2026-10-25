@@ -4,15 +4,22 @@ import tailwindcss from '@tailwindcss/vite'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+
+type ApiRequest = IncomingMessage & { query?: Record<string, string> }
+type JsonResponse = ServerResponse & {
+  status: (code: number) => JsonResponse
+  json: (data: unknown) => void
+}
 
 // https://vite.dev/config/
 export default defineConfig(async ({ mode }) => {
-  const plugins: any[] = [react(), tailwindcss()];
+  const plugins: Plugin[] = [...react(), ...tailwindcss()];
   try {
-    // @ts-ignore
+    // @ts-expect-error — .vite-source-tags.js ships without type declarations
     const m = await import('./.vite-source-tags.js');
     plugins.push(m.sourceTags());
-  } catch {}
+  } catch { /* Source-tags plugin is optional; continue without it. */ }
 
   const env = loadEnv(mode, process.cwd(), ['VITE_', 'NEXT_PUBLIC_']);
   // Also load all .env files into process.env so API handlers can access server-side secrets
@@ -67,7 +74,7 @@ function buildApiIndex(): Array<{ path: string; pattern: RegExp; specificity: nu
 
   const apiIndex = buildApiIndex();
 
-  async function handleApiRequest(req: any, res: any) {
+  async function handleApiRequest(req: ApiRequest, res: ServerResponse) {
     try {
       if (res.headersSent) return;
       if (req.method === 'OPTIONS') {
@@ -115,19 +122,19 @@ function buildApiIndex(): Array<{ path: string; pattern: RegExp; specificity: nu
       }
       const origEnd = res.end.bind(res);
       let statusCode = res.statusCode || 200;
-      const wrappedRes: any = Object.assign(res, {
+      const wrappedRes: JsonResponse = Object.assign(res, {
         status(code: number) {
           statusCode = code;
           return wrappedRes;
         },
-        json(data: any) {
+        json(data: unknown) {
           for (const [k, v] of Object.entries(CORS_HEADERS)) res.setHeader(k, v);
           res.setHeader('Content-Type', 'application/json');
           res.statusCode = statusCode;
           origEnd(JSON.stringify(data));
         },
       });
-      await handler(req as any, wrappedRes);
+      await handler(req, wrappedRes);
       if (!res.writableEnded) {
         res.statusCode = statusCode;
         if (!res.headersSent) {
@@ -136,15 +143,16 @@ function buildApiIndex(): Array<{ path: string; pattern: RegExp; specificity: nu
         }
         origEnd('');
       }
-    } catch (err: any) {
-      console.error('[api]', err?.message || err);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : undefined;
+      console.error('[api]', message || err);
       try {
         if (!res.headersSent) {
           for (const [k, v] of Object.entries(CORS_HEADERS)) res.setHeader(k, v);
           res.setHeader('Content-Type', 'application/json');
         }
         res.statusCode = 500;
-        res.end(JSON.stringify({ error: err?.message || 'Internal error' }));
+        res.end(JSON.stringify({ error: message || 'Internal error' }));
       } catch { /* ignore */ }
     }
   }
@@ -157,7 +165,7 @@ function buildApiIndex(): Array<{ path: string; pattern: RegExp; specificity: nu
     configureServer(server: ViteDevServer) {
       server.middlewares.use(async (req, res, next) => {
         if (req.url && (req.url === '/api' || req.url.startsWith('/api/'))) {
-          await handleApiRequest(req as any, res as any);
+          await handleApiRequest(req, res);
           return;
         }
         next();
@@ -170,5 +178,17 @@ function buildApiIndex(): Array<{ path: string; pattern: RegExp; specificity: nu
     plugins,
     envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
     define: processEnvDefines,
+    build: {
+      rollupOptions: {
+        output: {
+          // Keep the entry chunk under Vite's 500 kB warning: @supabase/supabase-js
+          // is large and shared by the shell and every lazy page, so it gets
+          // its own chunk instead of inflating the entry.
+          manualChunks: {
+            supabase: ['@supabase/supabase-js'],
+          },
+        },
+      },
+    },
   };
 })

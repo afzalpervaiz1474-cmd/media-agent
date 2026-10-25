@@ -2,6 +2,7 @@ import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, FileText, Upload, Users, Youtube, Music2, Instagram, Facebook,
   Workflow, ListChecks, Bot, Settings as SettingsIcon, LogOut, Moon, Sun, Waves, Bell, Search, Command, Menu, Radio, Scale,
+  type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
@@ -34,13 +35,19 @@ export default function AppLayout() {
   const [unread, setUnread] = useState(0)
   const [mobileOpen, setMobileOpen] = useState(false)
 
-  useEffect(() => { setMobileOpen(false) }, [loc.pathname])
+  // Close the mobile nav when the route changes, adjusted during render
+  // (React's recommended pattern) instead of setting state inside an effect.
+  const [prevPathname, setPrevPathname] = useState(loc.pathname)
+  if (prevPathname !== loc.pathname) {
+    setPrevPathname(loc.pathname)
+    setMobileOpen(false)
+  }
 
   useEffect(() => {
     let alive = true
     const load = async () => {
       try {
-        const r = await api.get<{ items: any[] }>('/api/notifications?unread=1')
+        const r = await api.get<{ items?: unknown[] }>('/api/notifications?unread=1')
         if (alive) setUnread(r.items?.length ?? 0)
       } catch { /* ignore */ }
     }
@@ -120,7 +127,7 @@ export default function AppLayout() {
   )
 }
 
-function Section({ items }: { items: { to: string; icon: any; label: string }[] }) {
+function Section({ items }: { items: { to: string; icon: LucideIcon; label: string }[] }) {
   return (
     <div className="space-y-0.5">
       {items.map((it) => (

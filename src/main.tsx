@@ -3,9 +3,9 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import './index.css'
 import App from './App'
-import { AuthProvider } from './contexts/AuthContext'
-import { ThemeProvider } from './contexts/ThemeContext'
-import { ToastProvider } from './contexts/ToastContext'
+import { AuthProvider } from './contexts/AuthProvider'
+import { ThemeProvider } from './contexts/ThemeProvider'
+import { ToastProvider } from './contexts/ToastProvider'
 import { handleGoogleRedirect } from './lib/googleAuth'
 
 handleGoogleRedirect()

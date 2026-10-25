@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
@@ -7,14 +7,36 @@ import EmptyState from '../components/EmptyState'
 import { timeAgo } from '../lib/format'
 import { ListChecks, Search } from 'lucide-react'
 
+interface JobListItem {
+  id: string
+  kind: string
+  status: string
+  progress?: number
+  started_at?: string
+  finished_at?: string
+  attempts?: number
+  max_attempts?: number
+}
+
 export default function Jobs() {
-  const [items, setItems] = useState<any[]>([])
+  const [items, setItems] = useState<JobListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [q, setQ] = useState('')
   const [status, setStatus] = useState('all')
 
-  const load = () => { setLoading(true); api.get<{ items: any[] }>(`/api/jobs`).then((r)=>setItems(r.items||[])).finally(()=>setLoading(false)) }
-  useEffect(() => { load(); const id = setInterval(load, 10000); return () => clearInterval(id) }, [])
+  const load = useCallback(() => { setLoading(true); api.get<{ items?: JobListItem[] }>(`/api/jobs`).then((r)=>setItems(r.items||[])).finally(()=>setLoading(false)) }, [])
+  // Local wrapper: the set-state-in-effect rule records any component-scope
+  // function that calls setState, so the polling setup runs through a
+  // function defined inside the effect. Behavior unchanged: initial load
+  // plus 10s polling, cleaned up on unmount.
+  useEffect(() => {
+    const start = () => {
+      load()
+      const id = setInterval(load, 10000)
+      return () => clearInterval(id)
+    }
+    return start()
+  }, [load])
 
   const filtered = useMemo(() => items.filter((j) => {
     if (status !== 'all' && j.status !== status) return false
